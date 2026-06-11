@@ -1,0 +1,21 @@
+# Lens Gateway — systemd user unit
+# 安装：bash scripts/install-service.sh
+[Unit]
+Description=OpenClaw Lens Gateway (Even Realities glasses bridge)
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/EvenRealities-Claw/gateway
+Environment=PYTHONPATH=%h/EvenRealities-Claw/gateway
+ExecStart=%h/EvenRealities-Claw/gateway/.venv/bin/python -m lens_gateway.main serve
+Restart=always
+RestartSec=3
+# 资源边界：ASR 解码是短突发负载；限制内存防失控。
+# 若与 agent 工作负载抢核明显，解开 CPUAffinity 注释把网关钉到 0-1 核
+# （同时把 ~/.lens-gateway/config.json 里 asr.cpu_threads 改为 2）。
+MemoryMax=3G
+# CPUAffinity=0 1
+
+[Install]
+WantedBy=default.target

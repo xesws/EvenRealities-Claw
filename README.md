@@ -7,21 +7,25 @@ G2 眼镜 ◀─BLE─▶ 手机 Even App 插件 ◀─WSS─▶ Lens Gateway �
  mic/HUD        (哑终端+看门狗)        ASR·路由·HUD帧编排        工部·格物·都察
 ```
 
-**当前状态**：规划阶段（v0.1）。设计与计划已定稿，尚未开始编码。
+**当前状态**：v0.2.0 —— 阶段一（模拟器闭环）+ 阶段二（真机 MVP）开发完成，端到端实弹验证通过（e2e 14/14，生产冒烟 11s 完成一轮真实问答）。**眼镜到手即可按 [REPORT.md](REPORT.md) 第 3 节开始使用。**
 
 ## 文档
 
 | 文档 | 内容 |
 |---|---|
-| [docs/DEVELOPMENT-PLAN.md](docs/DEVELOPMENT-PLAN.md) | **开发计划**：MVP 定义 + 四阶段任务分解（含验收标准） |
-| [docs/DESIGN.md](docs/DESIGN.md) | **系统设计**：调研结论、总体架构、「一瞥 HUD」UI 规范（状态机/Layout/更新节奏）、红队风险清单 R1-R14 |
+| [REPORT.md](REPORT.md) | **交付报告**：开发内容与技术方法 + **拿到眼镜后的完整上手流程** + 排障速查 |
+| [protocol/PROTOCOL.md](protocol/PROTOCOL.md) | Lens 协议 v1：插件↔网关 WS 协议（认证/渲染帧/时序） |
+| [docs/DEVELOPMENT-PLAN.md](docs/DEVELOPMENT-PLAN.md) | 开发计划：MVP 定义 + 四阶段任务分解（含验收标准） |
+| [docs/DESIGN.md](docs/DESIGN.md) | 系统设计：调研结论、总体架构、「一瞥 HUD」UI 规范、红队风险清单 R1-R14 |
 
-## 规划中的仓库结构
+## 仓库结构
 
 ```
-plugin/     # Even Hub 插件（TypeScript，跑在官方 App WebView 内）
-gateway/    # Lens Gateway（Python：WSS 服务、faster-whisper ASR、Agent 路由、HUD 帧编排）
-protocol/   # HUD 帧协议 JSON Schema（TS/Python 双端类型的单一事实源）
+plugin/     # Even Hub 插件（TypeScript/Vite，跑在官方 App WebView 内）+ harness 浏览器模拟器
+gateway/    # Lens Gateway（Python/aiohttp：WS 服务、设备 JWT、faster-whisper ASR、HUD 帧编排、OpenClaw 适配）
+protocol/   # Lens 协议 v1（插件与网关的契约）
+deploy/     # systemd 服务单元
+scripts/    # 安装脚本
 docs/       # 设计与计划文档
 ```
 

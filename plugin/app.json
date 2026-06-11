@@ -1,0 +1,16 @@
+{
+  "package_id": "com.openclaw.lens",
+  "name": "OpenClaw Lens",
+  "version": "0.1.0",
+  "edition": "202601",
+  "min_app_version": "2.0.0",
+  "min_sdk_version": "0.0.10",
+  "entrypoint": "index.html",
+  "permissions": [
+    {
+      "name": "g2-microphone",
+      "desc": "将眼镜麦克风语音发送到你的私有 Agent 服务器"
+    }
+  ],
+  "supported_languages": ["zh", "en"]
+}

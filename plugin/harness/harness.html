@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>OpenClaw Lens · 浏览器模拟器</title>
+    <style>
+      :root {
+        --bg: #0b0f0d;
+        --panel: #131a16;
+        --line: #243029;
+        --fg: #e6f2ea;
+        --dim: #8aa394;
+        --green: #2bdc7e;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--fg);
+        font-family: -apple-system, 'PingFang SC', 'Noto Sans CJK SC', sans-serif;
+      }
+      .harness {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 20px;
+        padding: 20px;
+        align-items: flex-start;
+        justify-content: center;
+      }
+      .left { display: flex; flex-direction: column; gap: 14px; }
+      h2 { margin: 0; font-size: 15px; color: var(--dim); font-weight: 600; }
+      h2 b { color: var(--green); }
+
+      /* 576×288 眼镜屏，等比放大 1.5x 显示 */
+      .glasses-shell {
+        width: 864px;
+        height: 432px;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        overflow: hidden;
+        background: #000;
+        position: relative;
+      }
+      .glasses-screen {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 576px;
+        height: 288px;
+        transform: scale(1.5);
+        transform-origin: top left;
+        background: #000;
+        color: #39ffa0;
+        font-family: 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+      }
+      .controls { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+      .controls button {
+        font: inherit;
+        background: var(--panel);
+        color: var(--fg);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 10px 16px;
+        cursor: pointer;
+      }
+      .controls button:hover { border-color: var(--green); }
+      .mic { font-size: 13px; color: var(--dim); }
+      .mic em { color: var(--green); font-style: normal; }
+      .log {
+        width: 864px;
+        height: 180px;
+        overflow-y: auto;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 10px 12px;
+        font: 12px/1.6 'SF Mono', Menlo, Consolas, monospace;
+        color: var(--dim);
+        white-space: pre-wrap;
+      }
+      .log .t { color: #4d6457; }
+
+      /* 手机框：插件 UI 原样跑在里面 */
+      .phone-frame {
+        width: 400px;
+        min-height: 720px;
+        border: 1px solid var(--line);
+        border-radius: 28px;
+        overflow: hidden;
+        background: var(--bg);
+        box-shadow: 0 0 40px rgba(43, 220, 126, 0.06);
+      }
+      @media (max-width: 1320px) {
+        .harness { justify-content: flex-start; overflow-x: auto; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="harness">
+      <div class="left">
+        <h2><b>OpenClaw Lens</b> 浏览器模拟器 —— 完整插件 + 假眼镜，连真网关即可全链路验证</h2>
+        <div class="glasses-shell">
+          <div id="glassesScreen" class="glasses-screen"></div>
+        </div>
+        <div class="controls">
+          <button id="btnTap">单击镜腿（翻页）</button>
+          <button id="btnDouble">双击镜腿（退出）</button>
+          <button id="btnDrop">断网模拟（关 WS）</button>
+          <span class="mic">麦克风：<em id="micState">关闭</em></span>
+        </div>
+        <div id="mockLog" class="log"></div>
+      </div>
+      <div class="phone-frame">
+        <div id="app"></div>
+      </div>
+    </div>
+    <script type="module" src="./harness.ts"></script>
+  </body>
+</html>
