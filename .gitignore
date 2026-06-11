@@ -1,0 +1,34 @@
+# secrets — never commit
+.env
+.env.*
+*.token
+*.key
+*.pem
+secrets/
+credentials*
+
+# node / plugin
+node_modules/
+dist/
+build/
+*.tsbuildinfo
+
+# python / gateway
+__pycache__/
+*.pyc
+venv/
+.venv/
+*.egg-info/
+
+# audio / models — never commit recordings
+*.wav
+*.pcm
+*.mp3
+audio_cache/
+models/
+
+# editors / os
+.vscode/
+.idea/
+.DS_Store
+*.log
