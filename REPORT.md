@@ -58,8 +58,10 @@ EvenRealities-Claw/
 ├── protocol/PROTOCOL.md       ← 插件↔网关 WS 协议 v1（认证/渲染帧/时序图）
 ├── gateway/                   ← 服务器端（Python 3.9 / aiohttp）
 │   ├── lens_gateway/
-│   │   ├── server.py          ← HTTP/WS 服务与路由
-│   │   ├── session.py         ← HUD 状态机 + 帧节流（核心）
+│   │   ├── server.py          ← HTTP/WS 服务与路由 + 会话 TTL 回收
+│   │   ├── session.py         ← 装配层：一块屏 + 一条语音链路（只做路由，无业务逻辑）
+│   │   ├── device/hud.py      ← 设备抽象：帧构造/节流/状态条/分页/计时器/**帧租约**
+│   │   ├── voice/pipeline.py  ← 语音链路：PTT → PCM → ASR → 确认窗口 → agent → 流式上屏
 │   │   ├── asr.py             ← faster-whisper 双模型管线
 │   │   ├── openclaw.py        ← 工部网关适配器
 │   │   ├── formatting/        ← 排版引擎（像素盒分页，与官方 pretext 度量逐条对齐）
@@ -73,7 +75,7 @@ EvenRealities-Claw/
 │   │   ├── auth.py            ← 配对码/设备 JWT/吊销
 │   │   ├── config.py          ← 配置定义（运行时配置在 ~/.lens-gateway/）
 │   │   └── main.py            ← CLI：serve / pair-code / devices / revoke
-│   ├── tests/                 ← 168 单测 + e2e_sim.py（22 项端到端）+ fixtures 语音
+│   ├── tests/                 ← 208 单测 + e2e_sim.py（22 项端到端）+ fixtures 语音
 │   ├── requirements.txt
 │   └── README.md              ← 网关模块说明与实测数据
 ├── plugin/                    ← 手机端插件（TypeScript / Vite / 官方 SDK ^0.0.14）
@@ -116,7 +118,7 @@ EvenRealities-Claw/
 - partial 只解码最近 12 秒尾部（控制 CPU）；说话软上限 25 秒自动截停（规避 G2 audioControl 未知时长上限，红队 R10）；
 - **全局解码串行锁**：两个 ctranslate2 实例并发解码会在 4 核 ARM 上互锁（实测踩坑，见第 11 节），全部解码（含启动 warmup）严格串行。
 
-**HUD 状态机（`session.py`）——按设计文档「一瞥 HUD」实现**
+**HUD 状态机（`device/hud.py`）——按设计文档「一瞥 HUD」实现**
 
 | 状态 | 状态条 | 行为 |
 |---|---|---|
@@ -205,7 +207,9 @@ EvenRealities-Claw/
 
 | 验证 | 范围 | 结果 |
 |---|---|---|
-| `gateway/tests/`（pytest） | 字形度量/折行禁则/像素盒分页/净化/markdown 降级/版式契约/配对/JWT/吊销/过期/持久化，含 3 宽度 × 31 语料的参数化不变量与 600 例随机模糊 | **168/168** |
+| `gateway/tests/`（pytest） | 字形度量/折行禁则/像素盒分页/净化/markdown 降级/版式契约/配对/JWT/吊销/过期/持久化，含 3 宽度 × 31 语料的参数化不变量与 600 例随机模糊 | **208/208** |
+| **设备抽象层**（`tests/test_device.py`） | 帧节流与 coalescing、seq 单调、状态迁移、翻页四触发源等价与边界、租约冲突/续租/过期/抢占、外部渲染走同一排版引擎、事件缓冲增量拉取、快照结构 | **24/24** |
+| **会话装配与回收**（`tests/test_session.py`） | S5 工具态接活、错误分支、`reset` 重新注入小屏风格、消息路由、会话 TTL 只回收「离线且静默」、启动钩子只注册一次、ASR warmup 幂等 | **16/16** |
 | **排版引擎 vs 官方 pretext** | 17 075 码点的 advance + 1 376 个折行用例逐条比对（外部 oracle） | **零分歧** |
 | 插件构建链 | `npm install && tsc --noEmit && vite build`（strict 模式） | 全绿 |
 | 插件桥接冒烟（vitest + jsdom） | 真 SDK + 真 `GlassesController` + 保真夹具：建页只能一次/rebuild 接力、写失败不毒化去重缓存、BLE 卡死 5s 超时、缺字静默丢弃、折行与 pretext 一致、溢出裁行、前台进出 vs 真退出、5 手势 × 4 来源、未知 eventType 不变幽灵翻页、遥测读回、麦被抢 | **26/26** |
@@ -332,10 +336,17 @@ $VENV -m lens_gateway.main revoke dev_xxx  # 吊销某台手机（怀疑凭证�
     "max_utterance_seconds": 25.0
   },
   "composer": {
-    "wrap_chars": 17,             // 每行汉字数 ← 真机实测后最可能要调的
-    "lines_per_page": 5,
+    // 注意：**没有** wrap_chars / lines_per_page 这类"每行几个字"的旋钮了。
+    // 每行宽度与每页行数由 protocol/hud-contract.json 的像素版式和固件
+    // 27px 固定行高唯一决定（官方：分页由容器真实像素盒驱动，不是字符预算）。
+    // 旧键仍写在配置里不会让网关起不来——Config.load 会告警并忽略。
+    "glyph_profile": "symbol",    // 字形档位：symbol / cjk / ascii
+    "glyph_overrides": {},        // 按语义名覆盖单个字形，如 {"listening": "★"}
+    "body_safety_px": 0,          // 折行额外退让像素（0 = 与固件度量逐位一致）
     "throttle_ms": 500,           // 内容帧最小间隔 ← 真机刷新实测后调
-    "confirm_seconds": 1.2        // 转写确认停留
+    "confirm_seconds": 1.2,       // 转写确认停留
+    "reading_idle_seconds": 60.0, // 阅读态无操作回待机
+    "session_ttl_seconds": 86400  // 离线且静默超过此时长的会话被回收（0 = 永不）
   },
   "openclaw": {
     "url": "ws://127.0.0.1:18789",            // 工部网关
@@ -363,7 +374,7 @@ systemctl --user restart lens-gateway
 ```bash
 cd ~/EvenRealities-Claw/gateway
 .venv/bin/pip install -r requirements-dev.txt      # 测试依赖（pytest / pytest-asyncio）
-PYTHONPATH=. .venv/bin/pytest tests/ -q            # 26 单测，秒级
+PYTHONPATH=. .venv/bin/pytest tests/ -q            # 208 单测，秒级
 PYTHONPATH=. .venv/bin/python tests/e2e_sim.py     # 端到端，自足运行（~2 分钟）
 ```
 
@@ -429,7 +440,10 @@ PYTHONPATH=. .venv/bin/python tests/e2e_sim.py
 2. **mic 仲裁**：插件聆听中长按镜腿触发官方 Even AI，看是否出现「麦克风没有声音」告警（看门狗应在 ~1s 内报）；反向：Even AI 用完后插件能否恢复收音；
 3. **镜腿事件**：单击/双击在插件页是否如期翻页/退出（验证 TouchBar 事件对 WebView 的暴露）；若不行，翻页退化为手机按钮（已可用）；
 4. **audioControl 时长**：连续按住说到 25s 自动截停是否正常；再把 `max_utterance_seconds` 临时调到 60 试探固件上限；
-5. **真实刷新与字宽**：盯着流式回复看是否闪烁/撕裂（调 `throttle_ms`），一行 17 个汉字在真机上是否溢出或浪费（调 `wrap_chars`）。
+5. **真实刷新与字宽**：盯着流式回复看是否闪烁/撕裂（调 `throttle_ms`）。
+   **字宽不用再调了** —— 折行已按官方 `pretext` 的固件度量逐位复刻，与官方 JS oracle
+   17 075 码点零分歧；真机若出现半字溢出，是版本差，退让阀是 `body_safety_px`（默认 0），
+   不是"每行几个字"（那个旋钮已经删掉了，见 §6.3）。
 
 ## 11. 工程问题记录
 
@@ -439,6 +453,14 @@ PYTHONPATH=. .venv/bin/python tests/e2e_sim.py
 2. **py3.9 事件循环绑定**：`asyncio.Lock`/`Event` 在 `web.run_app` 创建自己的 loop 之前构造 → `got Future attached to a different loop`。修复：服务对象在循环内构造。
 3. **ARM 进程级首解码延迟**：ctranslate2 int8 每进程首次解码需 20-35s（kernel 初始化），且每个模型一次。修复：启动 warmup 吃掉成本 + healthz 增加 `asr_ready` 字段。
 4. ASR 误听"眼镜链路"→"眼睛练路"：热词表补充域词后修正——**以后发现误听就往 `config.json` 的 hotwords 里加词**。
+5. **aiohttp 启动钩子撞名 → 说完话十秒字才上屏**：给 `server.py` 加会话回收时新写了一个
+   `_on_startup`，与文件后面已有的同名方法冲突；Python 类体里后定义的覆盖先定义的，
+   于是 `build_app` 里两处 `on_startup.append` 变成"同一个 ASR warmup 注册两遍"。
+   静音输入会让 whisper 退化成重复生成直到 max tokens，**一次 warmup 要 ~12s 且全程持解码锁**，
+   第二遍正好卡住用户第一句话的 `final`。表征是"ASR 好慢"（松手→上屏 7.6s），
+   实测拆开是**等锁 9.5s + 真正解码 0.35s**。修复：钩子合并成一个 + `warmup()` 幂等，
+   松手→上屏回到 **0.4s**；两条都有回归单测（`tests/test_session.py`）。
+   教训是**测总耗时不够，要能拆出"等待"与"计算"各占多少**——否则这类问题会被归咎于模型太慢。
 
 ## 12. 阶段三预告（设计已定稿，未开发）
 
@@ -518,7 +540,9 @@ PYTHONPATH=. .venv/bin/python tests/e2e_sim.py
 |---|---|---|
 | `lens_gateway/formatting/`（排版引擎） | 971 | **168**（含 3 宽度 × 31 语料参数化 + 600 例随机模糊 + 官方 oracle 比对） |
 | `auth.py` | 106 | 含在上述 168 内 |
-| `session.py`（HUD 状态机）+ `asr.py` + `openclaw.py` + `server.py` | 998 | **0**（拆分与首批单测排在 M3） |
+| `device/hud.py`（设备抽象 + 帧租约） | 330 | **24** |
+| `session.py`（装配）+ `voice/pipeline.py` + `server.py` 会话回收 | 560 | **16** |
+| `asr.py` + `openclaw.py` + `server.py` 其余部分 | ~640 | 端到端覆盖，无独立单测（排在 M7） |
 | `plugin/src/`（TypeScript） | ~1400 | **36**（桥接层 26 + 字形契约 10；WS 层仍为 0） |
 
 端到端：`tests/e2e_sim.py` **22/22**，自足运行、不依赖任何仓库外服务。

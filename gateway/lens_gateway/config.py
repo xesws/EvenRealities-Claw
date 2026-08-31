@@ -63,6 +63,7 @@ class ComposerConfig:
     low_conf_threshold: float = -0.9     # avg_logprob 低于此值视为低置信
     reading_idle_seconds: float = 60.0   # 阅读态无操作回待机
     final_short_linger_seconds: float = 15.0
+    session_ttl_seconds: float = 86400.0  # 修 S4：离线且静默超过此时长的会话被回收（0=永不）
 
     def __post_init__(self) -> None:
         if self.throttle_ms < 0:
@@ -72,7 +73,8 @@ class ComposerConfig:
         for name, val in (("confirm_seconds", self.confirm_seconds),
                           ("confirm_seconds_low_conf", self.confirm_seconds_low_conf),
                           ("reading_idle_seconds", self.reading_idle_seconds),
-                          ("final_short_linger_seconds", self.final_short_linger_seconds)):
+                          ("final_short_linger_seconds", self.final_short_linger_seconds),
+                          ("session_ttl_seconds", self.session_ttl_seconds)):
             if val < 0:
                 raise ValueError(f"{name} 不能为负：{val}")
 

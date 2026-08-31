@@ -188,9 +188,11 @@ async def run_client() -> None:
         # ---------------- 4. 转写确认帧（S3 带 final 文本）----------------
         s3 = await recv_until(
             lambda o: o.get("type") == "frame" and o["state"] == "S3" and o["containers"]["body"], 30)
+        s3_lag = time.time() - t_speech_end
         if not check("松手→final 转写上屏（<8s）",
-                     s3 is not None and (time.time() - t_speech_end) < 8,
-                     s3["containers"]["body"][:30] if s3 else "30s 内未收到带正文的 S3 帧"):
+                     s3 is not None and s3_lag < 8,
+                     (f'{s3_lag:.1f}s: ' + s3["containers"]["body"][:30]) if s3
+                     else f"{s3_lag:.1f}s 内未收到带正文的 S3 帧"):
             if s3 is None:
                 return
         check("转写文本命中关键词「畅通」",

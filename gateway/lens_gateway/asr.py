@@ -60,6 +60,15 @@ class AsrEngine:
                     compute_type=self.cfg.compute_type, cpu_threads=self.cfg.cpu_threads)
 
     async def warmup(self) -> None:
+        """加载模型并跑一遍静音解码，吃掉首调延迟。**幂等**。
+
+        幂等不是可有可无的：静音输入会让 whisper 退化成重复生成直到 max tokens，
+        实测一次 warmup 要 ~12s，而且**全程持锁**。一旦被重复调用（比如 aiohttp 的
+        `on_startup` 被注册了两次），第二遍就会把用户第一句话的 `final` 堵在锁上十几秒 ——
+        表现是"说完话，字过了十秒才上屏"，看起来像 ASR 慢，其实一次解码只要 0.35s。
+        """
+        if self.ready:
+            return
         # 必须与 partial/final 共用同一把锁：两个 ctranslate2 实例并发解码
         # （各自 cpu_threads 个 OMP 线程）在 4 核 ARM 上会互锁，全局严格串行。
         loop = asyncio.get_running_loop()

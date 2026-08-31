@@ -34,8 +34,39 @@ class LensServer:
         self.claw = OpenClawClient(cfg.openclaw)
         self.sessions: dict[str, DeviceSession] = {}      # deviceId -> 常驻会话
         self.active_ws: dict[str, web.WebSocketResponse] = {}  # deviceId -> 当前连接
+        self._sweeper: asyncio.Task | None = None
 
     # ---------- app ----------
+
+    def sweep_sessions(self, now: float | None = None) -> list[str]:
+        """回收离线且静默超过 TTL 的会话（修 S4）。
+
+        `self.sessions` 以前**只增不减**：每个配对过的设备都会永久占着一个
+        DeviceSession（含 PCM 缓冲、分页器、计时器任务）。设备再也不上线也不会释放，
+        长跑的网关内存单调增长。这里按「已离线 + 静默超时」两个条件一起判定 ——
+        在线会话无论多久没动都不回收，否则会把用户正看着的画面清掉。
+        """
+        ttl = self.cfg.composer.session_ttl_seconds
+        if ttl <= 0:
+            return []
+        now = now if now is not None else time.monotonic()
+        dead = [did for did, s in self.sessions.items()
+                if not s.hud.online and now - s.last_active > ttl]
+        for did in dead:
+            session = self.sessions.pop(did)
+            session.hud.cancel_timer()
+            log.info("回收静默会话 %s（离线 %.0fs）", did, now - session.last_active)
+        return dead
+
+    async def _sweep_loop(self) -> None:
+        ttl = self.cfg.composer.session_ttl_seconds
+        interval = max(60.0, min(ttl / 10, 3600.0)) if ttl > 0 else 3600.0
+        try:
+            while True:
+                await asyncio.sleep(interval)
+                self.sweep_sessions()
+        except asyncio.CancelledError:
+            pass
 
     def build_app(self) -> web.Application:
         app = web.Application()
@@ -54,6 +85,7 @@ class LensServer:
         else:
             log.warning("plugin dist not found — /plugin/ disabled (先构建 plugin)")
         app.on_startup.append(self._on_startup)
+        app.on_cleanup.append(self._on_cleanup)
         return app
 
     @staticmethod
@@ -64,6 +96,11 @@ class LensServer:
 
     async def _on_startup(self, _app) -> None:
         asyncio.ensure_future(self._warmup())
+        self._sweeper = asyncio.ensure_future(self._sweep_loop())
+
+    async def _on_cleanup(self, _app) -> None:
+        if self._sweeper and not self._sweeper.done():
+            self._sweeper.cancel()
 
     async def _warmup(self) -> None:
         try:
