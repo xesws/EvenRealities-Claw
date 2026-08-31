@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import secrets
 import time
 from pathlib import Path
 
@@ -19,7 +20,8 @@ from aiohttp import WSMsgType, web
 
 from .asr import AsrEngine
 from .auth import AuthStore
-from .config import STATE_DIR, Config, jwt_secret
+from .config import STATE_DIR, Config, control_secret, jwt_secret
+from .control import ControlPlane
 from .openclaw import OpenClawClient
 from .session import DeviceSession
 
@@ -30,6 +32,7 @@ class LensServer:
     def __init__(self, cfg: Config):
         self.cfg = cfg
         self.auth = AuthStore(STATE_DIR, jwt_secret())
+        self.control_secret = control_secret()
         self.asr = AsrEngine(cfg.asr)
         self.claw = OpenClawClient(cfg.openclaw)
         self.sessions: dict[str, DeviceSession] = {}      # deviceId -> 常驻会话
@@ -75,10 +78,14 @@ class LensServer:
         app.router.add_post("/admin/pair-code", self.handle_admin_pair_code)
         app.router.add_get("/admin/devices", self.handle_admin_devices)
         app.router.add_post("/admin/revoke", self.handle_admin_revoke)
+        ControlPlane(self).add_routes(app)
         dist = self.cfg.resolve_plugin_dist()
         if dist:
-            app.router.add_get("/", lambda r: web.HTTPFound("/plugin/"))
-            app.router.add_get("/plugin", lambda r: web.HTTPFound("/plugin/"))
+            async def _to_plugin(_req: web.Request) -> web.Response:
+                raise web.HTTPFound("/plugin/")
+
+            app.router.add_get("/", _to_plugin)
+            app.router.add_get("/plugin", _to_plugin)
             app.router.add_get("/plugin/", self._index(dist))
             app.router.add_static("/plugin", dist, show_index=False)
             log.info("serving plugin from %s", dist)
@@ -123,18 +130,32 @@ class LensServer:
             "sessions": len(self.sessions),
         })
 
-    @staticmethod
-    def _require_loopback(req: web.Request) -> None:
-        peer = req.transport.get_extra_info("peername") if req.transport else None
-        if not peer or peer[0] not in ("127.0.0.1", "::1"):
-            raise web.HTTPForbidden(text="admin API is loopback-only")
+    def _require_control_auth(self, req: web.Request) -> None:
+        """管理面与控制面的唯一鉴权：状态目录里的共享密钥（W4）。
+
+        取代了原来的 loopback 判据 —— 它按 peername 判断，而推荐的 TLS 方案是
+        caddy `reverse_proxy 127.0.0.1:8443`，反代之后所有请求的 peername 都是
+        127.0.0.1，判据整体失效；加上 `host` 默认 `0.0.0.0`，等于把 `/admin/*`
+        暴露给了任何人。密钥怎么来见 `config.control_secret()`。
+        """
+        header = req.headers.get("Authorization", "")
+        # RFC 7235 允许 scheme 与凭证之间有 1 个以上空格，scheme 本身大小写不敏感
+        scheme, _, rest = header.partition(" ")
+        token = rest.strip() if scheme.lower() == "bearer" else ""
+        # 必须比字节：非 ASCII 的令牌会让 compare_digest(str, str) 抛 TypeError，
+        # 结果是 500 而不是 401 —— 那本身就是一个可供攻击者区分的信号。
+        if not token or not secrets.compare_digest(token.encode(), self.control_secret.encode()):
+            raise web.HTTPUnauthorized(
+                text="需要 Authorization: Bearer <控制面密钥>（见 ~/.lens-gateway/control.secret）",
+                headers={"WWW-Authenticate": 'Bearer realm="lens-control"'},
+            )
 
     async def handle_admin_pair_code(self, req: web.Request) -> web.Response:
-        self._require_loopback(req)
+        self._require_control_auth(req)
         return web.json_response({"code": self.auth.new_pair_code(), "ttl": 600})
 
     async def handle_admin_devices(self, req: web.Request) -> web.Response:
-        self._require_loopback(req)
+        self._require_control_auth(req)
         rows = []
         for d in self.auth.list_devices():
             row = dict(d.__dict__)
@@ -145,7 +166,7 @@ class LensServer:
         return web.json_response(rows)
 
     async def handle_admin_revoke(self, req: web.Request) -> web.Response:
-        self._require_loopback(req)
+        self._require_control_auth(req)
         body = await req.json()
         ok = self.auth.revoke(body.get("deviceId", ""))
         return web.json_response({"ok": ok})
@@ -156,7 +177,7 @@ class LensServer:
         ws = web.WebSocketResponse(heartbeat=30)
         await ws.prepare(req)
 
-        device_id = await self._authenticate(ws)
+        device_id = await self._authenticate(ws, req)
         if device_id is None:
             await ws.close()
             return ws
@@ -206,7 +227,22 @@ class LensServer:
                 session.detach()
         return ws
 
-    async def _authenticate(self, ws: web.WebSocketResponse) -> str | None:
+    def _client_key(self, req: web.Request) -> str:
+        """配对节流的计数键。
+
+        直连时用 peername。跑在反代后面时 peername 恒为 127.0.0.1，必须改看
+        `X-Forwarded-For` —— 但这个头**直连时是攻击者可以随手伪造的**，
+        所以它只在 `trust_forwarded_for` 显式打开时才被采信。这也正是
+        `auth.PAIR_GLOBAL_MAX` 那道全局闸存在的理由：按来源的那一层永远可能被绕过。
+        """
+        if self.cfg.trust_forwarded_for:
+            fwd = req.headers.get("X-Forwarded-For", "")
+            if fwd:
+                return fwd.split(",")[0].strip()
+        peer = req.transport.get_extra_info("peername") if req.transport else None
+        return peer[0] if peer else "unknown"
+
+    async def _authenticate(self, ws: web.WebSocketResponse, req: web.Request) -> str | None:
         """第一帧必须是 pair / hello / refresh+hello。10s 超时。"""
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
@@ -224,7 +260,16 @@ class LensServer:
                 continue
             mtype = obj.get("type")
             if mtype == "pair":
-                result = self.auth.pair(str(obj.get("code", "")), str(obj.get("deviceName", "未命名设备")))
+                client = self._client_key(req)
+                retry = self.auth.pair_locked(client)
+                if retry:
+                    await ws.send_str(json.dumps(
+                        {"type": "error", "code": "pair_throttled",
+                         "message": f"配对尝试过多，请 {retry}s 后再试"}, ensure_ascii=False))
+                    log.warning("配对被节流：来源 %s，还需等待 %ds", client, retry)
+                    return None
+                result = self.auth.pair(str(obj.get("code", "")),
+                                        str(obj.get("deviceName", "未命名设备")), client=client)
                 if result is None:
                     await ws.send_str(json.dumps(
                         {"type": "error", "code": "pair_failed", "message": "配对码无效或已过期"},

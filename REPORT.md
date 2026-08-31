@@ -1,12 +1,17 @@
-# 交付报告：阶段一（模拟器闭环）+ 阶段二（真机 MVP）
+# 交付报告：阶段一（模拟器闭环）+ 阶段二（真机 MVP）+ 模拟阶段全量开发（M0–M5）
 
-> 2026-06-11 · v0.2.0
+> 2026-08-31 · v0.6.0
 > 仓库：https://github.com/xesws/EvenRealities-Claw （本文件 = 仓库根目录 `REPORT.md`）
 > 服务器：EC2 `i-0774fa15e542c6f1d`，公网 IP `35.169.46.183`，服务端口 `8443`
 
 ## TL;DR
 
 **整条链路已开发完成、部署为常驻服务、并实弹验证通过**：按住说话 → 中文语音 → faster-whisper 转写 → 真实工部 agent 回复 → 眼镜 HUD 分页渲染。生产冒烟全程 11 秒，状态机 S2→S3→S4→S6→S7 完整走通。
+
+**这副眼镜现在也是一台 MCP 设备**：`claude mcp add --transport http even-glasses http://127.0.0.1:8765/mcp`
+之后，任意厂商的模型都能用 8 个标准 MCP 工具驱动它——按 G2 真实像素版式分页、写屏、翻页、读遥测。
+屏幕只有一块，写屏要过**帧租约**，用户开口说话无条件抢占。四进程真链路端到端 **27/27**
+（帧真的从设备 WebSocket 出来，不是只改了服务器状态）——详见 [docs/MCP-SURFACE.md](docs/MCP-SURFACE.md)。
 
 **你拿到眼镜后要做的全部事情（共 ~10 分钟）：**
 1. AWS 控制台放行 8443 端口（→ 第 5.1 节）
@@ -22,9 +27,9 @@
 1. [系统形态与仓库地图](#1-系统形态与仓库地图)
 2. [各组件详细说明](#2-各组件详细说明)
 3. [一次问答的完整数据流（含实测耗时）](#3-一次问答的完整数据流)
-4. [验证结果汇总](#4-验证结果汇总)
+4. [验证结果汇总（pytest 298 + 语音 e2e 28 + MCP e2e 27）](#4-验证结果汇总)
 5. [【最重要】拿到眼镜后的完整上手流程](#5-拿到眼镜后的完整上手流程)
-6. [运维手册：服务、配置、日志、更新](#6-运维手册)
+6. [运维手册：服务、配置、日志、更新、**MCP 接入**](#6-运维手册)
 7. [排障速查表](#7-排障速查表)
 8. [安全模型](#8-安全模型)
 9. [如实声明：未完成项与已知限制](#9-未完成项与已知限制)
@@ -43,10 +48,16 @@
 └─────────┘             │    插件(WebView)     │            │   ├ /ws       插件接入             │
      ↑ 单击翻页/双击退出  │    按住说话+预览屏    │            │   ├ /plugin/  托管插件本体          │
                         └────────────────────┘            │   ├ /healthz  健康探针             │
-                                                          │   └ /admin/*  仅本机(配对码等)      │
-                                                          │      ↓ loopback (token 不出服务器) │
-                                                          │  OpenClaw 网关 → 工部 agent        │
-                                                          └──────────────────────────────────┘
+                                                          │   ├ /admin/*  配对码等(Bearer)     │
+                                                          │   └ /control/* 控制面(Bearer)  ◀──┼─┐
+                                                          │      ↓ loopback (token 不出服务器) │ │
+                                                          │  OpenClaw 网关 → 工部 agent        │ │
+                                                          └──────────────────────────────────┘ │
+                                            ┌───────────────────────────────────────────┐      │
+   厂商模型 / Claude Code ──MCP Streamable──▶│ lens_mcp（独立进程 :8765）                  │──────┘
+   任意 MCP 客户端            HTTP  /mcp     │ 8 tools · 3 resources · 1 prompt          │ 控制面 HTTP
+                                            │ 不持有 mic / ASR / 设备凭证                 │
+                                            └───────────────────────────────────────────┘
 ```
 
 仓库文件地图（你需要关心的部分）：
@@ -72,11 +83,16 @@ EvenRealities-Claw/
 │   │   │   ├── glyphs.py      ←   语义字形表 + import 时在库校验
 │   │   │   ├── sanitize.py    ←   控制字符/双向覆盖/伪状态条剔除
 │   │   │   └── markdown.py    ←   markdown 降级
-│   │   ├── auth.py            ← 配对码/设备 JWT/吊销
+│   │   ├── auth.py            ← 配对码/设备 JWT/吊销 + 配对失败节流
+│   │   ├── control.py         ← 控制面：/control/* 九个路由（MCP 进程的全部权限边界）
 │   │   ├── config.py          ← 配置定义（运行时配置在 ~/.lens-gateway/）
 │   │   └── main.py            ← CLI：serve / pair-code / devices / revoke
-│   ├── tests/                 ← 236 单测 + e2e_sim.py（28 项端到端）+ fixtures 语音
+│   ├── lens_mcp/              ← **MCP 表面（独立进程）**：8 tools / 3 resources / 1 prompt
+│   │   ├── server.py          ←   工具定义与描述（三条事实逐字写进 description）
+│   │   └── client.py          ←   控制面 HTTP 客户端（Bearer 共享密钥）
+│   ├── tests/                 ← 298 单测 + e2e_sim.py（语音 28 项）+ e2e_mcp.py（MCP 27 项）+ fixtures 语音
 │   ├── requirements.txt
+│   ├── requirements-mcp.txt   ← MCP 表面的依赖（网关本身不需要）
 │   └── README.md              ← 网关模块说明与实测数据
 ├── plugin/                    ← 手机端插件（TypeScript / Vite / 官方 SDK ^0.0.14）
 │   ├── app.json               ← Even Hub 清单（含 g2-microphone 权限）
@@ -85,7 +101,9 @@ EvenRealities-Claw/
 │   └── README.md              ← 插件开发/构建/扫码说明
 ├── deploy/lens-gateway.service ← systemd 用户服务单元
 ├── scripts/install-service.sh  ← 一键安装服务
-└── docs/                      ← DESIGN.md（系统设计）/ DEVELOPMENT-PLAN.md（四阶段计划）
+└── docs/                      ← DESIGN.md（系统设计）/ MCP-SURFACE.md（MCP 表面）/
+                               HARDWARE-SPEC.md（G2 权威规格）/ GLYPH-TABLE.md（字形判定）/
+                               SIMULATOR-PARITY.md（三方对照）/ DEVELOPMENT-PLAN.md
 ```
 
 服务器上的运行位置（不在仓库里）：
@@ -93,7 +111,7 @@ EvenRealities-Claw/
 | 路径 | 内容 |
 |---|---|
 | `~/EvenRealities-Claw/` | 仓库工作副本（gateway/.venv 虚拟环境、plugin/dist 构建产物在此，均不入 git） |
-| `~/.lens-gateway/` | 网关状态目录：`config.json`（可调参数）、`devices.json`（已配对设备）、`jwt.secret` |
+| `~/.lens-gateway/` | 网关状态目录：`config.json`（可调参数）、`devices.json`（已配对设备）、`jwt.secret`、`control.secret`（控制面共享密钥，0600） |
 | `~/.config/systemd/user/lens-gateway.service` | 服务单元（已 enable，开机自启、崩溃自拉起） |
 | `~/.cache/huggingface/` | whisper 模型缓存（tiny + base，已下载） |
 
@@ -161,9 +179,10 @@ EvenRealities-Claw/
 ### 2.2 眼镜插件（`plugin/`，已构建并由网关托管）
 
 **眼镜渲染（`glasses.ts`）**
-- 启动时按协议布局契约调 `createStartUpPageContainer` 建 3 个文本容器：状态条(0,0,576×32) / 正文(0,32,576×220) / 页脚(0,252,576×36)，失败码（oversize/outOfMemory）直接显示在手机页；
+- 启动时按协议布局契约（`protocol/hud-contract.json`，网关与插件读同一份）调 `createStartUpPageContainer` 建 3 个文本容器：状态条(0,0,576×36, `textColor` 4) / 正文(0,36,576×216 = **27px × 8 行**, 3) / 页脚(0,252,576×36, 2)，失败码（oversize/outOfMemory）直接显示在手机页；
+  **只调一次**：官方规定一个页面生命周期内 `createStartUpPageContainer` 不可重复，之后一律 `rebuildPageContainer`；
 - `textContainerUpgrade` 写入：120ms 防抖 + 只写内容变化的容器 + 串行写（BLE 渲染队列慢——官方 asr 模板同款策略）；空内容用单个空格兜底（防 protobuf 零值省略吃掉清屏指令）；
-- 镜腿事件：单击=翻页（发 `page next`）、双击=`shutDownPageContainer(1)` 退出插件（官方标准手势）；CLICK_EVENT=0 在 protobuf 零值省略下会变 undefined——已按官方模板做归一处理；
+- 输入事件：**5 种官方手势 × 4 个事件来源**（左镜腿 / 右镜腿 / R1 戒指 / 未知）都被解析并分开映射——单击 / 下滑=下一页、上滑=上一页、镜腿双击=`shutDownPageContainer(1)` 退出插件、**戒指双击=上一页**（旧版戒指双击直接把插件退掉）、长按与长按释放独立成事件且**故意不绑动作**（SDK 0.0.10 上长按被降级成 CLICK，绑了就是一次长按两次误翻页）。CLICK_EVENT=0 在 protobuf 零值省略下会变 undefined——已按官方模板做归一处理，但**缺 `eventType` 的未知系统事件不再一律归成单击**（否则任何未知事件都变成幽灵翻页）；
 - `onDeviceStatusChanged`：眼镜电量/佩戴状态显示在手机页，**并按协议 v1.1 上报给网关**。
   上报前先用 `getDeviceInfo()` 的 `model` + `sn` 判定这是不是眼镜 —— `DeviceStatus` 里
   只有 sn 没有 model，而 R1 戒指与眼镜走同一套推送，不判定就会把戒指电量报成眼镜电量。
@@ -184,6 +203,29 @@ EvenRealities-Claw/
 - 假眼镜屏：576×288×1.5 倍，黑底绿字，按容器坐标绝对定位渲染；
 - `audioControl(true)` → 浏览器 getUserMedia 真麦克风 → 流式重采样 16kHz s16le → 100ms 块推回插件——**与真眼镜走的代码路径完全一致**；
 - 附加按钮：模拟单击/双击镜腿、模拟断网（验证看门狗）。
+
+### 2.3 MCP 表面（`gateway/lens_mcp/`，独立进程）
+
+把一副物理眼镜的能力抽象成标准 MCP Tools，让**任何厂商的模型**都能驱动它。
+完整说明见 [docs/MCP-SURFACE.md](docs/MCP-SURFACE.md)，这里只讲三件事：
+
+**为什么是独立进程。** 技术上，官方 `mcp` SDK 的 Streamable HTTP 是 ASGI/Starlette 而网关是
+aiohttp，同进程跑不了；更重要的是安全——MCP 表面是面向外部厂商的攻击面，不该与持有麦克风、
+ASR、设备 JWT 签名密钥、OpenClaw 全权 token 的网关待在一起。两个进程之间只有一条控制面 HTTP，
+**MCP 进程能做的事等于控制面暴露的九个路由**，越权在架构上不成立。
+
+**三条被逐字写进 tool description 的事实**（模型不读我们的文档，只读描述）：
+
+| 事实 | 为什么必须写给模型 |
+|---|---|
+| 「监控」只能是轮询 | MCP 2026-07-28 规范下服务器不能主动发起 JSON-RPC 请求，做不到推送。所有读接口返回 `as_of`，否则模型会以为自己订阅上了 |
+| 屏幕只有一块，写屏要租约 | 用户按下 PTT 那一刻屏幕无条件归语音链路。`glasses_events` 是模型发现自己被抢占的**唯一**途径 |
+| 遥测可能是缓存值 | 官方没说明 `getDeviceInfo()` 是否真触发 BLE 读取，所以带 `source`（push/poll）与 `stale`；`available=false` 时明写「不要臆造一个电量数字」 |
+
+**工具参数里没有「每行几个字」。** G2 字体非等宽，分页由容器真实像素盒决定
+（正文 576×216px、固定 27px 行高 ⇒ 8 行/页），字宽用官方 `@evenrealities/pretext` 的固件
+度量复刻。给模型一个字符数旋钮只会让它算错。`small-screen-style` 提示同理——它由
+`DEFAULT_LAYOUT` 现场推导，版式一改提示跟着变。
 
 ---
 
@@ -209,13 +251,18 @@ EvenRealities-Claw/
 
 | 验证 | 范围 | 结果 |
 |---|---|---|
-| `gateway/tests/`（pytest） | 字形度量/折行禁则/像素盒分页/净化/markdown 降级/版式契约/配对/JWT/吊销/过期/持久化，含 3 宽度 × 31 语料的参数化不变量与 600 例随机模糊 | **236/236** |
+| `gateway/tests/`（pytest，全量） | 下列各专项之和：排版引擎/配对/JWT/设备抽象/遥测/控制面鉴权/控制面路由/MCP 工具 | **298/298** |
+| 排版与认证 | 字形度量/折行禁则/像素盒分页/净化/markdown 降级/版式契约/配对/JWT/吊销/过期/持久化，含 3 宽度 × 31 语料的参数化不变量与 600 例随机模糊 | **168/168** |
 | **设备抽象层**（`tests/test_device.py`） | 帧节流与 coalescing、seq 单调、状态迁移、翻页四触发源等价与边界、租约冲突/续租/过期/抢占、外部渲染走同一排版引擎、事件缓冲增量拉取、快照结构 | **24/24** |
 | **会话装配与回收**（`tests/test_session.py`） | S5 工具态接活、错误分支、`reset` 重新注入小屏风格、消息路由、会话 TTL 只回收「离线且静默」、启动钩子只注册一次、ASR warmup 幂等 | **16/16** |
 | **排版引擎 vs 官方 pretext** | 17 075 码点的 advance + 1 376 个折行用例逐条比对（外部 oracle） | **零分歧** |
 | 插件构建链 | `npm install && tsc --noEmit && vite build`（strict 模式） | 全绿 |
 | 插件桥接冒烟（vitest + jsdom） | 真 SDK + 真 `GlassesController` + 保真夹具：建页只能一次/rebuild 接力、写失败不毒化去重缓存、BLE 卡死 5s 超时、缺字静默丢弃、折行与 pretext 一致、溢出裁行、前台进出 vs 真退出、5 手势 × 4 来源、未知 eventType 不变幽灵翻页、**遥测组装与 R1 戒指过滤**、麦被抢 | **30/30** |
 | **遥测上行通路**（`tests/test_telemetry.py`） | 无数据返回 None 而非零值、SN 出网关只留后 4 位、戒指整条拒收并计数、未确认型号同样拒收、字段白名单、poll 标注"可能是缓存"、过期仍返回最后已知值、cmd/cmd_result 一次性与重连作废、失败回执不覆盖已知值、低电量页脚只出现一次 | **28/28** |
+| **控制面鉴权**（`tests/test_control_auth.py`） | Bearer 共享密钥（多空格/大小写/非 ASCII token 不再 500）、反代后 loopback 判据失效的回归、配对码失败节流（按来源锁定 + 全局上限）、`trust_forwarded_for` 关闭时不认 XFF | **22/22** |
+| **控制面路由**（`tests/test_control_plane.py`） | 九个路由的正常与错误分支：未知设备 vs 从未连过、租约冲突 409 结构化体、正文超限 413、所有读接口带 `as_of`、事件游标增量 | **22/22** |
+| **MCP 工具层**（`tests/test_mcp.py`） | `server.call_tool(...)` → `lens_mcp.client` → HTTP → `control.py` → `DeviceSession` → `HudDevice` → 帧的真实链路，无打桩：8 个工具 + 3 个资源 + 1 个提示 + 控制面不可达时的降级返回 | **18/18** |
+| **★ MCP 四进程真链路** `tests/e2e_mcp.py` | 真 MCP 客户端 → 真 `lens_mcp` 进程 → 真网关进程 → 真设备 WebSocket。断言落在最远端：调完工具后**帧必须真的从设备 WS 出来**；并发写屏返回 `LEASE_HELD` 而非最后写入者赢；`ptt start` 抢占后原租约 `LEASE_INVALID` 且事件可轮询到 | **27/27** |
 | 插件字形与契约 | 用官方 pretext 逐字校验所有会上屏的字符；反向断言被替换的 10 个旧字形确实缺失；版式自洽 | **10/10** |
 | **官方模拟器实测** `tools/g2probe.mjs` | 8 屏自动化：满画布建页返回码、缺字渲染、26 个字形逐格墨迹判定、内容上限字节/字符口径 | 见 [docs/GLYPH-TABLE.md](docs/GLYPH-TABLE.md)、[docs/HARDWARE-SPEC.md](docs/HARDWARE-SPEC.md) |
 | 插件 WS 协议冒烟（存根网关） | 配对→resume→翻页→PTT 上行→看门狗→退避重连→自动 refresh→旧 seq 丢弃 | ⚠️ **仍未实现**（桥接层已覆盖，WS 层尚未，见 §13） |
@@ -331,6 +378,9 @@ $VENV -m lens_gateway.main revoke dev_xxx  # 吊销某台手机（怀疑凭证�
 ```jsonc
 {
   "port": 8443,
+  "trust_forwarded_for": false,   // 默认不认 X-Forwarded-For。只有确认自己在
+                                  // 受信反代之后才打开——否则配对失败节流的
+                                  // "来源"可被任意客户端伪造，锁定形同虚设
   "asr": {
     "partial_model": "tiny",      // 聆听态模型
     "final_model": "base",        // 松手后模型（升 small 质量更好但延迟×3）
@@ -378,9 +428,10 @@ systemctl --user restart lens-gateway
 
 ```bash
 cd ~/EvenRealities-Claw/gateway
-.venv/bin/pip install -r requirements-dev.txt      # 测试依赖（pytest / pytest-asyncio）
-PYTHONPATH=. .venv/bin/pytest tests/ -q            # 236 单测，秒级
-PYTHONPATH=. .venv/bin/python tests/e2e_sim.py     # 端到端，自足运行（~2 分钟）
+.venv/bin/pip install -r requirements-dev.txt      # 测试依赖（pytest / pytest-asyncio / mcp）
+PYTHONPATH=. .venv/bin/pytest tests/ -q            # 298 单测，秒级
+PYTHONPATH=. .venv/bin/python tests/e2e_sim.py     # 语音端到端，自足运行（~2 分钟）
+PYTHONPATH=. .venv/bin/python tests/e2e_mcp.py     # MCP 四进程真链路（~30 秒）
 ```
 
 `e2e_sim.py` 默认自己拉起 `demo/fake_openclaw.py` 作为 **agent 测试夹具**——它跑的是与真
@@ -392,6 +443,32 @@ LENS_E2E_AGENT_URL=ws://127.0.0.1:18789 \
 LENS_E2E_AGENT_CONFIG=~/.openclaw/openclaw.json \
 PYTHONPATH=. .venv/bin/python tests/e2e_sim.py
 ```
+
+### 6.7 MCP 表面：让厂商模型直接驱动这副眼镜
+
+MCP 服务器是**独立进程**，不与网关同进程（技术原因：官方 `mcp` SDK 是 ASGI/Starlette，
+网关是 aiohttp；安全原因：它是面向外部厂商的攻击面，不该与持有麦克风、ASR、
+设备凭证的网关待在一起）。它能做的事**等于控制面暴露的九个路由**。
+
+```bash
+cd ~/EvenRealities-Claw/gateway
+.venv/bin/pip install -r requirements-mcp.txt
+PYTHONPATH=. .venv/bin/python -m lens_mcp          # 默认 streamable-http 127.0.0.1:8765
+
+# 注册给 Claude Code（或任何 MCP 客户端）
+claude mcp add --transport http even-glasses http://127.0.0.1:8765/mcp
+```
+
+| 环境变量 | 默认 | 说明 |
+|---|---|---|
+| `LENS_MCP_TRANSPORT` | `streamable-http` | 可设 `stdio` |
+| `LENS_MCP_HOST` / `LENS_MCP_PORT` | `127.0.0.1` / `8765` | **不要对外暴露**：MCP 层没有鉴权 |
+| `LENS_CONTROL_URL` | `http://127.0.0.1:8443` | 网关地址 |
+| `LENS_CONTROL_SECRET` | 读 `~/.lens-gateway/control.secret` | 控制面共享密钥 |
+
+工具清单、租约语义、鉴权设计与端到端证据见 **[docs/MCP-SURFACE.md](docs/MCP-SURFACE.md)**。
+一句话版本：8 个工具（1 个纯排版 + 1 个列设备 + 4 个写屏 + 2 个读状态）、3 个资源、
+1 个由真实版式推导的写作提示；**屏幕只有一块**，写屏要租约，用户按下 PTT 无条件抢占。
 
 ---
 
@@ -417,9 +494,19 @@ PYTHONPATH=. .venv/bin/python tests/e2e_sim.py
 1. **OpenClaw 全权 token 永不出服务器**（它等于服务器 shell 权限）：运行时从 `~/.openclaw/openclaw.json` 读取，只在 loopback 内使用；
 2. 手机端只持有：15 分钟 accessToken（内存）+ refreshToken（持久，服务端只存哈希，单设备可吊销）；
 3. 对外 WS API 只有 4 类动作：提交语音 / 翻页 / 打断 / 清屏——没有任何 OpenClaw RPC 透传，拿到设备凭证最多只能"跟工部说话"，不能改配置不能执行命令；
-4. 管理接口（配对码/设备列表/吊销）只监听 loopback，必须先 SSH 进服务器；
+4. **管理接口与控制面用共享密钥 Bearer**（`~/.lens-gateway/control.secret`，首次生成、0600）。
+   上一版按 peername 判 loopback，而 §6.4 推荐的 TLS 方案正是 caddy 反向代理——**反代之后
+   所有请求的 peername 都变成 127.0.0.1，这条守卫整体失效**，任何人都能 `POST /admin/pair-code`
+   把自己的手机配上来。这是当时就存在的活隐患，已改掉；配对码另加两层节流
+   （按来源 5 次/10 分钟锁 15 分钟 + 全局 30 次上限，全局阈值故意更宽松，
+   免得一个攻击者把所有人一起 DoS 掉）；
 5. 隐私：原始 PCM 不落盘（转写即丢）；按住说话 = 物理收音边界，无任何 always-on 监听；聆听态手机有 ●REC、眼镜状态条有 ◉；
-6. 已知薄弱点：明文传输（6.4 升级路径）；`gh` CLI 的 GitHub token 以明文存于本机（与本系统无关，建议换 fine-grained token）。
+6. **MCP 表面是独立进程**：它不持有麦克风、ASR、设备 JWT 签名密钥、OpenClaw token 中的任何一个，
+   能做的事**等于控制面暴露的九个路由**（列设备/取还租约/渲染/翻页/清屏/读状态/读遥测/读事件）——
+   越权在架构上不成立，不靠代码自律。厂商模型即使完全失控，也只能在这块屏幕上乱写字，
+   而写屏还要过租约、且用户开口会无条件夺回；
+7. 已知薄弱点：明文传输（6.4 升级路径）；**MCP 层本身无鉴权**，只能绑 `127.0.0.1`
+   （对外暴露前必须自己加一层）；`gh` CLI 的 GitHub token 以明文存于本机（与本系统无关，建议换 fine-grained token）。
 
 ---
 
@@ -428,6 +515,9 @@ PYTHONPATH=. .venv/bin/python tests/e2e_sim.py
 | 项 | 状态 | 说明 |
 |---|---|---|
 | 五项真机实测 | ❌ 需物理眼镜 | 见第 10 节清单 |
+| MCP 层鉴权 | ⚠️ 无 | MCP 进程本身不校验调用方，只能绑 `127.0.0.1`。控制面（网关侧）有 Bearer，所以**越权拿不到设备凭证**，但同机上任何进程都能写这块屏 |
+| MCP 多客户端身份 | ⚠️ 靠自报 | MCP 规范没有 session 概念，服务器分不清谁在调用；仲裁由租约的 `holder` 字符串承担，客户端自报。恶意客户端可以冒用别人的 holder 名 —— 但仍然抢不到别人手上的租约 |
+| 控制面限流 | ⚠️ 仅正文上限 | `MAX_RENDER_CHARS=20000`（超出 413），无 QPS 限流 |
 | TLS | ⚠️ | 当前 http/ws；差一个域名（6.4） |
 | 锁屏可用 | ❌ 设计内放弃 | 产品定位"亮屏按住说话"；锁屏存活时长属于真机实测项 |
 | 多 agent 路由 | ❌ 阶段三 | 当前固定工部；"问格物…"/"切到…"文法在设计文档已定稿 |
@@ -495,7 +585,7 @@ PYTHONPATH=. .venv/bin/python tests/e2e_sim.py
 
 | 声称位置 | 当时状态 | 现在 |
 |---|---|---|
-| §4「插件协议冒烟（jsdom + 存根网关）25/25」 | **不存在** | **部分补上**：`plugin/tests/` 已有 36 个 vitest 用例（桥接层 26 + 字形契约 10），但覆盖的是 **bridge 层**；WS 协议层（配对/resume/退避重连/refresh）的冒烟**仍未实现** |
+| §4「插件协议冒烟（jsdom + 存根网关）25/25」 | **不存在** | **部分补上**：`plugin/tests/` 已有 44 个 vitest 用例（桥接层 30 + 字形契约 10 + 夹具接线 4），但覆盖的是 **bridge 层**；WS 协议层（配对/resume/退避重连/refresh）的冒烟**仍未实现** |
 | §4「心跳看门狗专项 通过」 | **不存在** | **仍未实现** |
 
 ### 13.2 从未在物理 G2 上执行过的代码路径
@@ -548,11 +638,13 @@ PYTHONPATH=. .venv/bin/python tests/e2e_sim.py
 | `device/hud.py`（设备抽象 + 帧租约 + 低电量提示） | 380 | **24** |
 | `device/telemetry.py`（遥测缓存） | 130 | **28**（与上行通路合计） |
 | `session.py`（装配 + 遥测路由）+ `voice/pipeline.py` + `server.py` 会话回收 | 620 | **16** |
+| `control.py`（控制面九路由）+ `server.py` 鉴权与节流 | 200 + | **44**（路由 22 + 鉴权 22） |
+| `lens_mcp/`（MCP 表面：server + client） | 400 | **18**（走真实链路到帧，无打桩） |
 | `asr.py` + `openclaw.py` + `server.py` 其余部分 | ~640 | 端到端覆盖，无独立单测（排在 M7） |
-| `plugin/src/`（TypeScript） | ~1500 | **40**（桥接层 30 + 字形契约 10；WS 层仍为 0） |
+| `plugin/src`（TypeScript） | ~1500 | **44**（桥接层 30 + 字形契约 10 + 夹具接线 4；WS 层仍为 0） |
 
-端到端：`tests/e2e_sim.py` **28/28**，自足运行、不依赖任何仓库外服务。
-仓库**仍无 CI**（无 `.github/`），排在 M7。
+端到端：语音链路 `tests/e2e_sim.py` **28/28**、MCP 链路 `tests/e2e_mcp.py` **27/27**，
+两者都自足运行、不依赖任何仓库外服务。仓库**仍无 CI**（无 `.github/`），排在 M7。
 
 ### 13.6 真正只能靠真机判定的（6 项）
 

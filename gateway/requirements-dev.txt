@@ -1,5 +1,6 @@
 # 开发/测试依赖（运行时依赖见 requirements.txt）
 -r requirements.txt
+-r requirements-mcp.txt   # tests/test_mcp.py 与 tests/e2e_mcp.py 需要它
 
 pytest>=8.0
 pytest-asyncio>=0.23      # pytest.ini 的 asyncio_mode=auto 依赖它

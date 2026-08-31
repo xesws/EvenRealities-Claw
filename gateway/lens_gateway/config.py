@@ -90,6 +90,9 @@ class Config:
     host: str = "0.0.0.0"
     port: int = 8443
     plugin_dist: str = ""       # 插件构建产物目录（空=自动找 ../plugin/dist）
+    #: 是否信任 X-Forwarded-For 作为客户端来源（**只有确实跑在反代后面才可以开**）。
+    #: 直连时它是攻击者可随意伪造的请求头，开着等于让配对节流的按来源那一层形同虚设。
+    trust_forwarded_for: bool = False
     openclaw: OpenClawConfig = field(default_factory=OpenClawConfig)
     asr: AsrConfig = field(default_factory=AsrConfig)
     composer: ComposerConfig = field(default_factory=ComposerConfig)
@@ -100,7 +103,7 @@ class Config:
         cfg = Config()
         if path.exists():
             raw = json.loads(path.read_text())
-            for key in ("host", "port", "plugin_dist"):
+            for key in ("host", "port", "plugin_dist", "trust_forwarded_for"):
                 if key in raw:
                     setattr(cfg, key, raw[key])
             for key, cls in (("openclaw", OpenClawConfig), ("asr", AsrConfig), ("composer", ComposerConfig)):
@@ -122,6 +125,25 @@ class Config:
             return p if p.exists() else None
         p = Path(__file__).resolve().parents[2] / "plugin" / "dist"
         return p if p.exists() else None
+
+
+def control_secret() -> str:
+    """控制面 / 管理 API 的共享密钥（首次生成，0600 落盘到状态目录）。
+
+    **为什么不能继续用 loopback 判据**：原来的 `_require_loopback` 按 peername 判断，
+    而本项目推荐的 TLS 方案（REPORT §6.4）正是 caddy `reverse_proxy 127.0.0.1:8443` ——
+    反代之后**所有**请求的 peername 都变成 127.0.0.1，判据整体失效。
+    由于 `host` 默认 `0.0.0.0`，这意味着反代一上，任何人都能 `POST /admin/pair-code`
+    拿一个配对码把自己的手机配上来。这是今天就存在的活隐患，不是 MCP 才引入的。
+
+    真正的边界因此落到**文件权限**上：能读状态目录的人 = 能管这台网关的人。
+    """
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    f = STATE_DIR / "control.secret"
+    if not f.exists():
+        f.write_text(secrets.token_urlsafe(32))
+        f.chmod(0o600)
+    return f.read_text().strip()
 
 
 def jwt_secret() -> bytes:

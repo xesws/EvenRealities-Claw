@@ -93,9 +93,19 @@ def wait_port(port: int, timeout: float = 15) -> bool:
     return False
 
 
+CONTROL_SECRET = ""      # 由 main() 从状态目录读入（管理面按共享密钥鉴权，见 W4）
+
+
+def _admin_req(path: str, method: str = "GET", body: bytes | None = None):
+    return urllib.request.Request(
+        f"http://127.0.0.1:{PORT}{path}", data=body, method=method,
+        headers={"Content-Type": "application/json",
+                 "Authorization": f"Bearer {CONTROL_SECRET}"})
+
+
 def admin_live(device_id: str) -> dict | None:
     """从 /admin/devices 读某台设备的实时快照（含遥测）。"""
-    with urllib.request.urlopen(f"http://127.0.0.1:{PORT}/admin/devices", timeout=5) as r:
+    with urllib.request.urlopen(_admin_req("/admin/devices"), timeout=5) as r:
         for row in json.loads(r.read()):
             if row.get("device_id") == device_id:
                 return row.get("live")
@@ -103,8 +113,7 @@ def admin_live(device_id: str) -> dict | None:
 
 
 def pair_code() -> str:
-    req = urllib.request.Request(f"http://127.0.0.1:{PORT}/admin/pair-code", data=b"", method="POST")
-    with urllib.request.urlopen(req, timeout=5) as r:
+    with urllib.request.urlopen(_admin_req("/admin/pair-code", "POST", b""), timeout=5) as r:
         return json.loads(r.read())["code"]
 
 
@@ -392,6 +401,9 @@ async def main() -> None:
     try:
         print("等待网关就绪（含模型加载）…")
         await wait_health()
+        # 管理面按共享密钥鉴权（W4）：网关首次启动时把它写进状态目录
+        global CONTROL_SECRET
+        CONTROL_SECRET = (Path(state_dir) / "control.secret").read_text().strip()
         print("开始端到端闭环：")
         await run_client()
     finally:

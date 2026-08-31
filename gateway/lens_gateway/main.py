@@ -6,14 +6,17 @@ import json
 import sys
 import urllib.request
 
-from .config import Config
+from .config import Config, control_secret
 
 
 def _admin(cfg: Config, method: str, path: str, body: dict | None = None) -> dict:
     url = f"http://127.0.0.1:{cfg.port}{path}"
     data = json.dumps(body).encode() if body is not None else (b"" if method == "POST" else None)
+    # 管理面现在按共享密钥鉴权（W4）——CLI 与网关跑在同一台机器上，
+    # 直接从状态目录读密钥即可；真正的边界是那个 0600 文件的权限。
     req = urllib.request.Request(url, data=data, method=method,
-                                 headers={"Content-Type": "application/json"})
+                                 headers={"Content-Type": "application/json",
+                                          "Authorization": f"Bearer {control_secret()}"})
     with urllib.request.urlopen(req, timeout=5) as resp:
         return json.loads(resp.read())
 

@@ -17,6 +17,14 @@ import jwt
 ACCESS_TTL = 15 * 60          # accessToken 15 分钟
 PAIR_CODE_TTL = 10 * 60       # 配对码 10 分钟
 
+# 配对暴力破解防线（W4）。配对码只有 6 位数字（10^6）且 10 分钟有效 ——
+# 在没有节流的情况下，一台机器几分钟就能把码空间扫完，把自己的手机配进来。
+# 两层：**按来源**限制失败次数，再加一道**全局**闸，防止用大量 IP 摊薄第一层。
+PAIR_MAX_FAILURES = 5          # 同一来源窗口内允许的失败次数
+PAIR_FAILURE_WINDOW = 600.0    # 失败计数窗口（秒）
+PAIR_LOCKOUT = 900.0           # 触发后锁定时长（秒）
+PAIR_GLOBAL_MAX = 30           # 全局失败上限（同一窗口）
+
 
 def _sha256(s: str) -> str:
     return hashlib.sha256(s.encode()).hexdigest()
@@ -37,6 +45,8 @@ class AuthStore:
         self._secret = secret
         self._devices: dict[str, Device] = {}
         self._pair_codes: dict[str, float] = {}  # code -> expires_at
+        #: 配对失败记录：来源 → 失败时刻列表（含全局桶 `*`）
+        self._pair_failures: dict[str, list[float]] = {}
         self._load()
 
     def _load(self) -> None:
@@ -57,11 +67,40 @@ class AuthStore:
         self._pair_codes[code] = time.time() + PAIR_CODE_TTL
         return code
 
-    def pair(self, code: str, device_name: str) -> tuple[Device, str] | None:
+    def _recent_failures(self, key: str, now: float) -> list[float]:
+        hits = [t for t in self._pair_failures.get(key, []) if now - t < PAIR_FAILURE_WINDOW]
+        if hits:
+            self._pair_failures[key] = hits
+        else:
+            self._pair_failures.pop(key, None)
+        return hits
+
+    def pair_locked(self, client: str) -> int:
+        """该来源还要等多少秒才能再试配对。0 = 没锁。
+
+        分来源与全局两层：只有来源层会返回长锁定，全局层只是把窗口撑住 ——
+        否则一个攻击者就能用垃圾流量把**所有人**的配对都锁死（拒绝服务）。
+        """
+        now = time.time()
+        hits = self._recent_failures(client, now)
+        if len(hits) >= PAIR_MAX_FAILURES:
+            return max(1, int(PAIR_LOCKOUT - (now - hits[-1])))
+        if len(self._recent_failures("*", now)) >= PAIR_GLOBAL_MAX:
+            return max(1, int(PAIR_FAILURE_WINDOW - (now - self._pair_failures["*"][-1])))
+        return 0
+
+    def _note_pair_failure(self, client: str) -> None:
+        now = time.time()
+        for key in (client, "*"):
+            self._pair_failures.setdefault(key, []).append(now)
+
+    def pair(self, code: str, device_name: str, *, client: str = "unknown") -> tuple[Device, str] | None:
         exp = self._pair_codes.get(code)
         if exp is None or exp < time.time():
+            self._note_pair_failure(client)
             return None
         del self._pair_codes[code]  # 一次性
+        self._pair_failures.pop(client, None)   # 成功即清账
         device_id = "dev_" + secrets.token_hex(6)
         refresh = secrets.token_urlsafe(32)
         dev = Device(device_id=device_id, name=device_name[:64], refresh_hash=_sha256(refresh), created_at=time.time())
