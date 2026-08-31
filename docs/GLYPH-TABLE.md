@@ -58,9 +58,16 @@ cd plugin && node tools/g2probe.mjs
 | `✕` | U+2715 | 错误 | 0 | 0 px |
 | `⏸` | U+23F8 | 暂停 | 0 | 0 px |
 | `⏹` | U+23F9 | 停止 | 0 | 0 px |
+| `⚡` | U+26A1 | 低电量（DESIGN.md §4.4） | 0 | 判据 A 判定 |
 
-**两条判据 10/10 一致。** 官方文档站把 Misc Technical (U+2300–23FF) 与 Dingbats (U+2700–273F)
-整区列为 *"Entirely absent ranges"*，与此吻合。
+**前 10 个两条判据 10/10 一致。** 官方文档站把 Misc Technical (U+2300–23FF) 与
+Dingbats (U+2700–273F) 整区列为 *"Entirely absent ranges"*，与此吻合。
+
+第 11 个 `⚡` 是 M4 做低电量提示时补查的：`DESIGN.md §4.4` 承诺「电量 <15% 页脚出现一次
+`⚡15%`」，而 Misc Symbols 的支持区只到 U+2605–2667，U+26A1 在其外 —— 照着文档实现，
+真机上只会剩一个光秃秃的数字。现用 `▁` U+2581（advance 320，Block Elements 全区支持），
+形状恰好像一条快见底的电量条。它只走了判据 A（度量库），未单独截图 —— 判据 B 的 26 个
+字形与判据 A 零分歧，Block Elements 已有 `▌` 的截图佐证，故未再跑一轮探针。
 
 另一条同样重要的观测：模拟器 v0.7.0 的更新日志说它开了 `LV_USE_FONT_PLACEHOLDER` 并用 lvgl 的
 `g2` feature「对齐固件的缺字渲染」。截图证明**对齐的结果就是什么都不画** —— 官方文档站
@@ -88,6 +95,7 @@ cd plugin && node tools/g2probe.mjs
 | `›` | U+203A | page_next 下一页 | 128 | 9 px | 5 px |
 | `…` | U+2026 | ellipsis 省略号 | 160 | 6 px | 7 px |
 | `•` | U+2022 | bullet 项目符号 | 144 | 24 px | 6 px |
+| `▁` | U+2581 | battery_low 低电量 | 320 | 仅判据 A | — |
 
 **两条判据 16/16 一致。** 其中 `… ‹ ›` 三个此前被计划标为「待截图确认」（General Punctuation
 只有部分支持、官方没有逐字列出），现在确认**在库**。

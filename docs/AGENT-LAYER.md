@@ -515,4 +515,4 @@ HUD 出现 S5 工具态；**并实测 `stream=true` 与 `tool_calls` 能否并�
 - [nanobot](https://github.com/HKUDS/nanobot) —— 小 agent loop + 按需拉取 memory/skills 的思路
 - [DeepSeek API 文档](https://api-docs.deepseek.com/) —— §7 的全部事实来源
 - `docs/DESIGN.md` —— 系统总体设计与红队清单 R1–R14
-- `protocol/PROTOCOL.md` —— 插件↔网关协议 v1（与本文的 agent 协议是两回事）
+- `protocol/PROTOCOL.md` —— 插件↔网关协议 v1.1（与本文的 agent 协议是两回事）

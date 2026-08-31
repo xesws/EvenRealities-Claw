@@ -1,7 +1,15 @@
-# Lens 协议 v1 — 插件 ↔ Lens Gateway
+# Lens 协议 v1.1 — 插件 ↔ Lens Gateway
 
 > 单一 WebSocket 连接，路径 `/ws`。JSON 文本帧 = 控制/渲染消息；**二进制帧 = 原始 PCM 音频**（16kHz, s16le, mono），仅在 PTT 期间上行。
 > 设计原则：服务器持有全部状态；下行渲染帧**幂等**（整屏替换）且带**单调 seq**——客户端丢弃旧 seq，断连重连后服务器重放当前帧即恢复现场。
+>
+> **版本兼容规则：两端对未知消息类型一律静默忽略。** 因此加消息是**加法安全**的 ——
+> v1.0 的插件遇到 v1.1 的 `cmd` 什么也不做，v1.0 的网关收到 `telemetry` 同样直接丢。
+> 不存在"协议版本协商"，也不需要。
+>
+> **v1.1 变更**：新增遥测上行（`telemetry`）与命令/回执（`cmd` / `cmd_result`）。
+> 动机是 `glasses_telemetry` 这类 MCP 工具必须有真实数据源 —— 在此之前遥测从未离开过手机，
+> 网关对电量/佩戴/连接的知识为零，工具只能编。
 
 ## 1. 连接与认证
 
@@ -43,6 +51,58 @@ accessToken 过期 → `{"type":"error","code":"token_expired"}`，客户端用 
 | `{"type":"abort"}` | 打断当前 agent run |
 | `{"type":"reset"}` | 清屏回待机 |
 | `{"type":"ping","t":123}` | 心跳（建议 20s），服务器回 `pong` |
+| `{"type":"telemetry","data":{…}}` | **v1.1** 主动上报一次遥测，见 §2.1 |
+| `{"type":"cmd_result","id":"c1","ok":true,"data":{…}}` | **v1.1** 命令回执，见 §2.2 |
+
+### 2.1 遥测上报（v1.1）
+
+插件在 `onDeviceStatusChanged` 触发时**主动上报**——这是唯一能保证「新鲜」的来源。
+
+```jsonc
+{"type": "telemetry", "data": {
+  "model": "g2",              // 来自 getDeviceInfo()；未知为 null
+  "sn": "G2SN-ABCD1234",      // 完整 SN 只到网关为止，出网关只留后 4 位
+  "isGlasses": true,          // ★ 见下方"戒指问题"
+  "connectType": "connected",
+  "connected": true,
+  "batteryLevel": 86,         // 每个字段都可能是 null
+  "isCharging": false,
+  "isWearing": true,
+  "isInCase": false
+}}
+```
+
+**★ 戒指问题（型号判定必须在插件侧做）**：SDK 的 `DeviceStatus` 里**只有 `sn`、没有 `model`**
+（`even_hub_sdk/dist/index.d.ts:143`），而 Even 生态里 R1 戒指与眼镜走的是**同一套**
+`onDeviceStatusChanged` 推送。只看状态是分不出来的 —— 一不留神就会把戒指的电量报成眼镜的。
+插件必须拿 `getDeviceInfo()`（宿主方法名 `getGlassesInfo`）返回的 `model` + `sn` 去比对，
+把结论放进 `isGlasses`。**网关只接受 `isGlasses === true` 的记录**，其余计数后丢弃。
+
+**字段白名单**：网关只保留上表列出的字段，多送的一律丢弃 —— 遥测会经 MCP 流向第三方
+LLM 厂商，字段集必须是审过的。
+
+**缺失字段给 `null`，绝不补 0**：网关分不清「电量 0%」和「没读到电量」。
+
+### 2.2 命令与回执（v1.1）
+
+网关下发 `cmd`，插件必须回一条同 `id` 的 `cmd_result`——**失败也要回**，否则网关会一直挂着这个 id。
+
+```jsonc
+// S→C
+{"type": "cmd", "cmd": "telemetry", "id": "c1"}
+// C→S（成功）
+{"type": "cmd_result", "id": "c1", "ok": true, "data": { /* 同 §2.1 的 data */ }}
+// C→S（失败：不支持该命令 / 没有 bridge / 超时）
+{"type": "cmd_result", "id": "c1", "ok": false, "error": "no_bridge"}
+```
+
+规则：
+
+- **`id` 一次性**。网关认领后即从待回执表里移除，重放同一个 `id` 不会再被接受。
+- **重连即作废**。新连接会清空待回执表，旧连接的回执不被新连接认领。
+- **拉取回来的值记作 `source:"poll"`，不是 `push`**。官方**没有说明** `getDeviceInfo()`
+  是否真的触发一次 BLE 读取，手机端很可能直接返回缓存值。把 poll 无条件标成「新鲜」就是在编数据。
+- 失败的回执**不覆盖**已有的已知值。
 
 ## 3. 下行渲染帧（网关 → 插件）
 
@@ -102,6 +162,14 @@ accessToken 过期 → `{"type":"error","code":"token_expired"}`，客户端用 
 | `auth_failed` | token 无效/设备被吊销 | 回配对页 |
 | `busy` | 上一条还在跑 | 提示「说打断或稍等」 |
 | `internal` | 服务器内部错误 | 显示错误帧 |
+
+命令回执里的 `error`（v1.1，不是上表的连接级错误码）：
+
+| error | 含义 |
+|---|---|
+| `unsupported` | 插件不认识这条命令（旧版插件遇到新命令即如此） |
+| `no_bridge` | 插件没跑在 Even App 里，拿不到设备信息 |
+| 其它 | 插件侧异常的 message，原样透传 |
 
 ## 6. 时序示例（一次完整问答）
 

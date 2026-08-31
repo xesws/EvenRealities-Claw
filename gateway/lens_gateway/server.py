@@ -135,7 +135,14 @@ class LensServer:
 
     async def handle_admin_devices(self, req: web.Request) -> web.Response:
         self._require_loopback(req)
-        return web.json_response([d.__dict__ for d in self.auth.list_devices()])
+        rows = []
+        for d in self.auth.list_devices():
+            row = dict(d.__dict__)
+            session = self.sessions.get(getattr(d, "device_id", ""))
+            # 没有会话就是"这台设备本次进程内没连过"，遥测如实为 None，不编默认值
+            row["live"] = session.snapshot() if session else None
+            rows.append(row)
+        return web.json_response(rows)
 
     async def handle_admin_revoke(self, req: web.Request) -> web.Response:
         self._require_loopback(req)
@@ -174,6 +181,9 @@ class LensServer:
         await send_json({"type": "hello_ok", "deviceId": device_id, "exp": exp,
                          "server": "lens-gateway/0.1.0", "accessToken": access,
                          "resume": resume})
+        # 连上就先拉一次遥测，免得在设备下一次状态变化之前网关一直"不知道电量"。
+        # 拉回来的值记作 source="poll"（可能是手机端缓存），不冒充新鲜值。
+        await session.request_telemetry()
 
         try:
             async for msg in ws:

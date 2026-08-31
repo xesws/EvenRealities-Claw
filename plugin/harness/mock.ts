@@ -140,8 +140,16 @@ export interface EvenHostMock {
   simulateExit(abnormal?: boolean): void;
   /** 断网模拟：关掉页面里所有活动 WebSocket */
   killSockets(): number;
-  /** 推送设备状态（电量/佩戴等） */
+  /** 推送**眼镜**的设备状态（电量/佩戴等） */
   pushDeviceStatus(partial?: Record<string, unknown>): void;
+  /**
+   * 推送 **R1 戒指**的设备状态。
+   *
+   * 这是遥测通路上最容易出错的一条：`DeviceStatus` 里只有 sn、没有 model
+   * （SDK `dist/index.d.ts:143`），戒指与眼镜走的是同一套推送。夹具必须能造出
+   * 这个场景，否则"按型号过滤"永远只是注释里的一句承诺。
+   */
+  pushRingStatus(partial?: Record<string, unknown>): void;
   /** 读回眼镜屏上**实际渲染**的文本（已丢弃字库外字符、已按固件折行、已裁掉溢出行） */
   screenText(): Record<string, string[]>;
   readonly micOpen: boolean;
@@ -656,6 +664,16 @@ export function installEvenHostMock(opts: MockOptions): EvenHostMock {
     isInCase: false,
   };
 
+  /** R1 戒指：**sn 与眼镜不同，其余字段形状完全一样** —— 这正是坑所在。 */
+  let ringStatus: Record<string, unknown> = {
+    sn: 'MOCK-R1-0002',
+    connectType: 'connected',
+    isWearing: true,
+    batteryLevel: 41,
+    isCharging: false,
+    isInCase: false,
+  };
+
   (window as unknown as Record<string, unknown>).flutter_inappwebview = {
     callHandler(name: string, raw: unknown): unknown {
       if (name !== 'evenAppMessage') {
@@ -721,8 +739,13 @@ export function installEvenHostMock(opts: MockOptions): EvenHostMock {
     },
     pushDeviceStatus(partial?: Record<string, unknown>) {
       deviceStatus = { ...deviceStatus, ...partial };
-      log(`推送 deviceStatusChanged：电量 ${String(deviceStatus.batteryLevel)}%`);
+      log(`推送眼镜 deviceStatusChanged：电量 ${String(deviceStatus.batteryLevel)}%`);
       pushToSdk('deviceStatusChanged', { ...deviceStatus });
+    },
+    pushRingStatus(partial?: Record<string, unknown>) {
+      ringStatus = { ...ringStatus, ...partial };
+      log(`推送戒指 deviceStatusChanged：电量 ${String(ringStatus.batteryLevel)}%（不该被当成眼镜遥测）`);
+      pushToSdk('deviceStatusChanged', { ...ringStatus });
     },
     screenText() {
       const out: Record<string, string[]> = {};

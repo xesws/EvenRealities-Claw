@@ -29,7 +29,7 @@ import {
   type EvenAppBridge,
 } from '@evenrealities/even_hub_sdk';
 import { BLANK, EVENT_CAPTURE_CONTAINER, HUD_TEXT, LAYOUT } from './hud';
-import type { FrameContainers } from './types';
+import type { FrameContainers, GlassesTelemetry } from './types';
 
 export { LAYOUT } from './hud';
 
@@ -64,6 +64,11 @@ export interface GlassesEvents {
   onAudioPcm?: (pcm: Uint8Array) => void;
   /** 设备状态推送（电量/佩戴等） */
   onDeviceStatus?: (status: DeviceStatus) => void;
+  /**
+   * 一次遥测采样可以上报了（`onDeviceStatusChanged` 触发，即真实的状态变化）。
+   * 与 `onDeviceStatus` 分开是因为这一路要过型号判定：戒指的状态推送不会走到这里。
+   */
+  onTelemetry?: (telemetry: GlassesTelemetry) => void;
 }
 
 /** 是否运行在 Even App（或 harness mock）宿主里。 */
@@ -138,6 +143,11 @@ export class GlassesController {
   /** createStartUpPageContainer 一个页面生命周期只能调一次，之后走 rebuild。 */
   private pageCreated = false;
 
+  /** 最近一次设备状态推送。遥测的"新鲜"来源。 */
+  private lastStatus: DeviceStatus | null = null;
+  /** getDeviceInfo() 的结果，型号判定的唯一依据（DeviceStatus 里没有 model）。 */
+  private deviceInfo: DeviceInfo | null = null;
+
   constructor(
     private readonly bridge: EvenAppBridge,
     private readonly events: GlassesEvents = {},
@@ -145,9 +155,60 @@ export class GlassesController {
     this.unsubscribers.push(this.bridge.onEvenHubEvent((event) => this.onHubEvent(event)));
     this.unsubscribers.push(
       this.bridge.onDeviceStatusChanged((status) => {
+        this.lastStatus = status;
         this.events.onDeviceStatus?.(status);
+        void this.emitTelemetry();
       }),
     );
+  }
+
+  // ---------------------------------------------------------------- 遥测
+
+  /**
+   * 组装一次遥测采样。**型号判定在这里，不在网关**。
+   *
+   * `DeviceStatus`（`onDeviceStatusChanged` 的载荷）只有 `sn`，没有 `model`
+   * —— 而 Even 生态里 R1 戒指与眼镜走的是同一套状态推送。分辨的唯一办法是
+   * 拿 `getDeviceInfo()`（宿主侧方法名 `getGlassesInfo`）返回的 `model` + `sn`
+   * 去比对：sn 对不上就不是这副眼镜的状态，`isGlasses` 置 false，网关会拒收。
+   *
+   * 缺失的字段一律给 `null`，**绝不补 0** —— 网关那边分不清"电量 0%"和"没读到电量"。
+   */
+  async telemetry(): Promise<GlassesTelemetry> {
+    if (this.deviceInfo === null) this.deviceInfo = await this.getDeviceInfo();
+    const info = this.deviceInfo;
+    const status = this.lastStatus ?? info?.status ?? null;
+
+    // 型号确认为眼镜，且这条状态确实来自同一台设备
+    const modelIsGlasses = info?.isGlasses() === true;
+    const snMatches = !status || !info ? true : status.sn === info.sn;
+    if (!snMatches) {
+      console.debug('[glasses] 状态推送来自别的设备（多半是 R1 戒指），不作为眼镜遥测上报', {
+        statusSn: status?.sn,
+        glassesSn: info?.sn,
+      });
+    }
+
+    return {
+      model: info?.model ?? null,
+      sn: info?.sn ?? status?.sn ?? null,
+      isGlasses: modelIsGlasses && snMatches,
+      connectType: status?.connectType ?? null,
+      connected: status?.isConnected() ?? false,
+      batteryLevel: typeof status?.batteryLevel === 'number' ? status.batteryLevel : null,
+      isCharging: typeof status?.isCharging === 'boolean' ? status.isCharging : null,
+      isWearing: typeof status?.isWearing === 'boolean' ? status.isWearing : null,
+      isInCase: typeof status?.isInCase === 'boolean' ? status.isInCase : null,
+    };
+  }
+
+  private async emitTelemetry(): Promise<void> {
+    if (!this.events.onTelemetry) return;
+    try {
+      this.events.onTelemetry(await this.telemetry());
+    } catch (err) {
+      console.debug('[glasses] 遥测组装失败', err);
+    }
   }
 
   // ---------------------------------------------------------------- 事件
@@ -323,9 +384,17 @@ export class GlassesController {
     return withTimeout('audioControl', this.bridge.audioControl(open), false);
   }
 
-  /** 读设备遥测（电量/佩戴/连接）。以前从未被调用 ⇒ 网关对这些一无所知。 */
+  /**
+   * 读设备信息（型号 + SN + 状态）。以前从未被调用 ⇒ 网关对电量/佩戴一无所知。
+   *
+   * 官方**没有说明**它是否真的触发一次 BLE 读取，手机端很可能直接返回缓存值。
+   * 所以由它得到的遥测在网关侧记作 `source="poll"`，与设备主动上报的 `push` 分开 ——
+   * 把 poll 无条件标成"新鲜"就是在编数据。
+   */
   async getDeviceInfo(): Promise<DeviceInfo | null> {
-    return withTimeout('getDeviceInfo', this.bridge.getDeviceInfo(), null);
+    const info = await withTimeout('getDeviceInfo', this.bridge.getDeviceInfo(), null);
+    if (info) this.deviceInfo = info;
+    return info;
   }
 
   /** 官方标准退出：弹出前台交互层由用户确认。 */

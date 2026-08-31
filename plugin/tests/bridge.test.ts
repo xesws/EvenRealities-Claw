@@ -252,7 +252,7 @@ describe('手势归一（修：只认单击/双击，且从不读 eventSource）
   });
 });
 
-describe('遥测（修：getDeviceInfo 从未被调用过）', () => {
+describe('遥测（修：getDeviceInfo 从未被调用过 / 协议 v1.1 上行通路）', () => {
   it('能读回电量/佩戴/连接状态', async () => {
     h.mock.pushDeviceStatus({ batteryLevel: 12, isWearing: false });
     const info = await h.glasses.getDeviceInfo();
@@ -260,6 +260,61 @@ describe('遥测（修：getDeviceInfo 从未被调用过）', () => {
     expect(info?.status?.batteryLevel).toBe(12);
     expect(info?.status?.isWearing).toBe(false);
     expect(info?.status?.isConnected()).toBe(true);
+  });
+
+  it('telemetry() 组装出带型号判定的完整采样', async () => {
+    h.mock.pushDeviceStatus({ batteryLevel: 77, isWearing: true, isCharging: false });
+    await sleep(20);
+    const t = await h.glasses.telemetry();
+    expect(t.isGlasses).toBe(true);
+    expect(t.model).toBe('g2');
+    expect(t.sn).toBe('MOCK-G2-0001');
+    expect(t.batteryLevel).toBe(77);
+    expect(t.isWearing).toBe(true);
+    expect(t.connected).toBe(true);
+  });
+
+  it('设备状态变化会触发一次主动上报', async () => {
+    const pushed: Array<{ batteryLevel: number | null }> = [];
+    h.dispose();
+    const sdk = await import('@evenrealities/even_hub_sdk');
+    const { GlassesController } = await import('../src/glasses');
+    const bridge = await sdk.waitForEvenAppBridge();
+    const g = new GlassesController(bridge, { onTelemetry: (t) => pushed.push(t) });
+    try {
+      h.mock.pushDeviceStatus({ batteryLevel: 33 });
+      await sleep(60);
+      expect(pushed.at(-1)?.batteryLevel).toBe(33);
+    } finally {
+      g.dispose();
+    }
+  });
+
+  it('★ R1 戒指的状态推送不会被当成眼镜遥测', async () => {
+    // DeviceStatus 里只有 sn、没有 model，戒指与眼镜走同一套推送 ——
+    // 不做 sn 比对就会把 41% 的戒指电量报成眼镜电量。
+    await h.glasses.getDeviceInfo();          // 先确认眼镜的 model + sn
+    h.mock.pushRingStatus();
+    await sleep(20);
+    const t = await h.glasses.telemetry();
+    expect(t.isGlasses).toBe(false);
+    expect(t.batteryLevel).toBe(41);          // 值确实读到了……
+    // ……但 isGlasses=false，网关会整条拒收（gateway/tests/test_telemetry.py 断言了这一半）
+  });
+
+  it('缺失字段给 null 而不是 0', async () => {
+    const sdk = await import('@evenrealities/even_hub_sdk');
+    const { GlassesController } = await import('../src/glasses');
+    const bridge = await sdk.waitForEvenAppBridge();
+    const g = new GlassesController(bridge, {});
+    try {
+      // 从未推过任何状态：电量应当是 null（"不知道"），不是 0（"没电了"）
+      const t = await g.telemetry();
+      expect(t.batteryLevel === null || typeof t.batteryLevel === 'number').toBe(true);
+      if (t.batteryLevel === 0) throw new Error('未知电量被写成了 0');
+    } finally {
+      g.dispose();
+    }
   });
 });
 

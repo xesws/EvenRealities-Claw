@@ -14,7 +14,7 @@ G2 眼镜 ◀─BLE─▶ 手机 Even App 插件 ◀─WSS─▶ Lens Gateway �
 | 文档 | 内容 |
 |---|---|
 | [REPORT.md](REPORT.md) | **交付报告**：开发内容与技术方法 + **拿到眼镜后的完整上手流程** + 排障速查 |
-| [protocol/PROTOCOL.md](protocol/PROTOCOL.md) | Lens 协议 v1：插件↔网关 WS 协议（认证/渲染帧/时序） |
+| [protocol/PROTOCOL.md](protocol/PROTOCOL.md) | Lens 协议 v1.1：插件↔网关 WS 协议（认证/渲染帧/遥测上行/时序） |
 | [docs/DEVELOPMENT-PLAN.md](docs/DEVELOPMENT-PLAN.md) | 开发计划：MVP 定义 + 四阶段任务分解（含验收标准） |
 | [docs/DESIGN.md](docs/DESIGN.md) | 系统设计：调研结论、总体架构、「一瞥 HUD」UI 规范、红队风险清单 R1-R14 |
 | [docs/AGENT-LAYER.md](docs/AGENT-LAYER.md) | Agent 层设计：轻量化、最小权限的自研 agent（可替换） |
@@ -29,7 +29,7 @@ G2 眼镜 ◀─BLE─▶ 手机 Even App 插件 ◀─WSS─▶ Lens Gateway �
 plugin/     # Even Hub 插件（TypeScript/Vite，跑在官方 App WebView 内）
             #   harness/ 浏览器夹具（可注入故障）· probe/ 官方模拟器探针页 · tools/ 度量导出与模拟器自动化
 gateway/    # Lens Gateway（Python/aiohttp：WS 服务、设备 JWT、faster-whisper ASR、HUD 帧编排、OpenClaw 适配）
-protocol/   # Lens 协议 v1（插件与网关的契约）
+protocol/   # Lens 协议 v1.1（插件与网关的契约）
 deploy/     # systemd 服务单元
 scripts/    # 安装脚本
 docs/       # 设计与计划文档

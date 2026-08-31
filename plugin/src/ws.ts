@@ -6,7 +6,12 @@
  * - hello / pair / refresh 全流程；token_expired 自动 refresh 重试一次
  * - 二进制 PCM 上行：合并成 ≤200ms（≤6400 字节）的块再发，减少帧数
  */
-import { PLUGIN_VERSION, type FrameMessage, type ServerMessage } from './types';
+import {
+  PLUGIN_VERSION,
+  type FrameMessage,
+  type GlassesTelemetry,
+  type ServerMessage,
+} from './types';
 
 export type ConnState =
   | 'idle'
@@ -28,6 +33,11 @@ export interface LensClientEvents {
   onConnectionLost?: () => void;
   /** busy / internal 等服务器错误 */
   onServerError?: (code: string, message?: string) => void;
+  /**
+   * 网关下发的命令（协议 v1.1）。返回值就是回执载荷；抛错则回执 `ok:false`。
+   * 未注册回调 = 该命令不被支持，会如实回 `unsupported`，而不是假装成功。
+   */
+  onCmd?: (cmd: string) => Promise<unknown>;
 }
 
 const BACKOFF_MS = [1000, 2000, 4000, 8000, 16000, 30000];
@@ -130,6 +140,14 @@ export class LensClient {
 
   sendReset(): void {
     this.sendJson({ type: 'reset' });
+  }
+
+  /**
+   * 主动上报一次遥测（协议 v1.1）。**只在设备真的报告了状态变化时调用** ——
+   * 这是唯一能保证"新鲜"的来源，网关会把它记作 `source="push"`。
+   */
+  sendTelemetry(data: GlassesTelemetry): void {
+    this.sendJson({ type: 'telemetry', data });
   }
 
   /** PCM 上行：合并 ≤200ms 的块。 */
@@ -248,8 +266,31 @@ export class LensClient {
       case 'error':
         this.handleServerError(msg.code, msg.message);
         break;
-      default:
+      case 'cmd':
+        void this.handleCmd(msg.cmd, msg.id);
         break;
+      default:
+        // 未知消息类型静默忽略：协议扩展靠"两端都容忍未知"来保持加法安全
+        break;
+    }
+  }
+
+  /** 执行一条下行命令并回执。失败也必须回执，否则网关会一直挂着这个 id。 */
+  private async handleCmd(cmd: string, id: string): Promise<void> {
+    if (!this.events.onCmd) {
+      this.sendJson({ type: 'cmd_result', id, ok: false, error: 'unsupported' });
+      return;
+    }
+    try {
+      const data = await this.events.onCmd(cmd);
+      this.sendJson({ type: 'cmd_result', id, ok: true, data });
+    } catch (err) {
+      this.sendJson({
+        type: 'cmd_result',
+        id,
+        ok: false,
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
   }
 

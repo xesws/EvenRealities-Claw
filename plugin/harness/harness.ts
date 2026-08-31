@@ -54,6 +54,10 @@ $('btnBattery').addEventListener('click', () => {
 $('btnUnworn').addEventListener('click', () => {
   mock.pushDeviceStatus({ isWearing: false });
 });
+// 遥测通路上最容易错的一条：戒指与眼镜走同一套 deviceStatusChanged，
+// DeviceStatus 里只有 sn、没有 model。插件必须靠 getDeviceInfo() 的型号 + sn 比对
+// 把它挡掉，否则网关会把 41% 的戒指电量当成眼镜电量报给 MCP。
+$('btnRing').addEventListener('click', () => mock.pushRingStatus());
 
 // 4) 故障注入
 function bindCheck(id: string, apply: (on: boolean) => void): void {

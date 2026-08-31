@@ -93,6 +93,15 @@ def wait_port(port: int, timeout: float = 15) -> bool:
     return False
 
 
+def admin_live(device_id: str) -> dict | None:
+    """从 /admin/devices 读某台设备的实时快照（含遥测）。"""
+    with urllib.request.urlopen(f"http://127.0.0.1:{PORT}/admin/devices", timeout=5) as r:
+        for row in json.loads(r.read()):
+            if row.get("device_id") == device_id:
+                return row.get("live")
+    return None
+
+
 def pair_code() -> str:
     req = urllib.request.Request(f"http://127.0.0.1:{PORT}/admin/pair-code", data=b"", method="POST")
     with urllib.request.urlopen(req, timeout=5) as r:
@@ -171,6 +180,42 @@ async def run_client() -> None:
         hello = await recv_until(lambda o: o.get("type") == "hello_ok", 15)
         check("hello_ok 携带 resume 现场帧",
               bool(hello) and hello.get("resume", {}).get("type") == "frame")
+
+        # ---------------- 2.5 遥测上行通路（协议 v1.1）----------------
+        # 网关在 hello_ok 之后立刻拉一次遥测，插件（这里是本脚本）必须回执。
+        cmd = await recv_until(lambda o: o.get("type") == "cmd" and o.get("cmd") == "telemetry", 8)
+        check("hello 后网关主动拉一次遥测（cmd）", cmd is not None and bool(cmd.get("id")),
+              f'id={cmd.get("id")}' if cmd else "8s 内未收到 telemetry 命令")
+        if cmd:
+            await ws.send_json({"type": "cmd_result", "id": cmd["id"], "ok": True, "data": {
+                "model": "g2", "sn": "E2E-SN-7788", "isGlasses": True,
+                "connectType": "connected", "connected": True,
+                "batteryLevel": 64, "isCharging": False, "isWearing": True, "isInCase": False,
+            }})
+        # 主动上报（真实场景是 onDeviceStatusChanged 触发）
+        await ws.send_json({"type": "telemetry", "data": {
+            "model": "g2", "sn": "E2E-SN-7788", "isGlasses": True,
+            "connectType": "connected", "connected": True,
+            "batteryLevel": 58, "isCharging": True, "isWearing": True, "isInCase": False,
+        }})
+        # 戒指的状态：**必须**被网关整条拒收，否则 41% 会被当成眼镜电量
+        await ws.send_json({"type": "telemetry", "data": {
+            "model": "ring1", "sn": "E2E-RING-0002", "isGlasses": False,
+            "connectType": "connected", "connected": True, "batteryLevel": 41,
+        }})
+        await asyncio.sleep(0.4)
+        live = admin_live(pair_ok["deviceId"])
+        tel = (live or {}).get("telemetry") or {}
+        check("遥测已到网关且是主动上报的那条", tel.get("batteryLevel") == 58 and tel.get("source") == "push",
+              json.dumps(tel, ensure_ascii=False)[:80])
+        check("遥测带 sampled_at / age_ms / stale 三件套",
+              all(k in tel for k in ("sampled_at", "age_ms", "stale")) and tel.get("stale") is False,
+              f'age={tel.get("age_ms")}ms stale={tel.get("stale")}')
+        check("★ 戒指遥测被拒收（41% 没有变成眼镜电量）",
+              tel.get("batteryLevel") == 58
+              and (live or {}).get("telemetry_diagnostics", {}).get("rejected", {}).get("not_glasses") == 1,
+              json.dumps((live or {}).get("telemetry_diagnostics", {}), ensure_ascii=False))
+        check("SN 出网关只留后 4 位", tel.get("sn") == "…7788", str(tel.get("sn")))
 
         # ---------------- 3. PTT + 实时灌入 PCM（100ms/块，1x 速度）----------------
         await ws.send_json({"type": "ptt", "action": "start"})
@@ -296,6 +341,14 @@ async def run_client() -> None:
         check("reset → 回 S0 待机", s0 is not None,
               s0["containers"]["status"] if s0 else "8s 内未回 S0")
         await ws.close()
+
+        # ---------------- 10. 断线后遥测仍可读，且如实标 stale ----------------
+        await asyncio.sleep(0.4)
+        live = admin_live(pair_ok["deviceId"])
+        tel = (live or {}).get("telemetry") or {}
+        check("断线后遥测仍返回最后已知值（不是报错、也不是清空）",
+              (live or {}).get("online") is False and tel.get("batteryLevel") in (58, 64),
+              f'online={(live or {}).get("online")} battery={tel.get("batteryLevel")}')
 
 
 def _spawn_agent_fixture(state_dir: str) -> tuple[subprocess.Popen | None, str, str]:

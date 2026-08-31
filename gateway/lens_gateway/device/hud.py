@@ -166,6 +166,11 @@ class HudDevice:
 
         self.last_active = time.monotonic()   # 修 S4：给会话 TTL 用
 
+        # 低电量提示（DESIGN.md §4.4：「电量仅 <15% 页脚出现一次」）。
+        # 在 M4 打通遥测上行之前这条承诺**没有数据源**，只能是空话。
+        self._battery_armed = True            # 回到阈值以上就重新武装，避免反复刷屏
+        self._battery_pending: int | None = None
+
         self.emit_idle(urgent=True)
 
     # ---------------------------------------------------------------- 连接
@@ -202,6 +207,35 @@ class HudDevice:
             parts.append(suffix)
         return " ".join(p for p in parts if p)
 
+    # ---------------------------------------------------------------- 电量
+
+    def note_battery(self, level: int | None, charging: bool | None) -> None:
+        """收到一次遥测后调用。低于阈值则**安排一次**页脚提示。
+
+        规则来自 DESIGN.md 的"坚决不显示"清单：电量平时**根本不上屏** ——
+        眼镜屏只有 8 行，常驻一个电量数字是纯粹的信息浪费。只有跌破阈值时
+        在页脚出现一次，之后除非充上电再掉下去，不会再出现第二次。
+
+        注意原设计写的是「⚡15%」，但 `⚡` U+26A1 **不在 G2 字库**
+        （Misc Symbols 只支持 U+2605–2667），真机上会被静默丢弃，只剩一个数字。
+        实际用的是字库内的 `▁`（形如快见底的电量条），见 `_replaces.battery_low`。
+        """
+        threshold = self.cfg.composer.battery_warn_percent
+        if threshold <= 0 or level is None:
+            return
+        if charging or level > threshold:
+            self._battery_armed = True
+            return
+        if self._battery_armed:
+            self._battery_armed = False
+            self._battery_pending = level
+
+    def _with_battery(self, foot: str) -> str:
+        if self._battery_pending is None:
+            return foot
+        tag = f'{self.glyphs["battery_low"]}{self._battery_pending}%'
+        return f"{foot} {tag}".strip()
+
     # ---------------------------------------------------------------- 帧发送
 
     def _build(self, state: str, status: str, body: str, foot: str, **meta) -> dict:
@@ -226,6 +260,7 @@ class HudDevice:
         urgent = urgent or state != self.state
         self.state = state
         self.last_active = time.monotonic()
+        foot = self._with_battery(foot)
         frame = self._build(state, status, body, foot, **meta)
         self.current_frame = frame
         if self._send is None:
@@ -235,6 +270,9 @@ class HudDevice:
         if urgent or now - self._last_frame_ts >= throttle:
             self._last_frame_ts = now
             self._pending = None
+            # 这一帧确实会发出去，低电量提示的"出现一次"到此兑现。
+            # 只在真的发出时清零：被节流合并掉的帧不算数，否则提示会悄无声息地丢掉。
+            self._battery_pending = None
             asyncio.ensure_future(self._safe_send(self._send, frame))
         else:
             self._pending = frame  # coalescing：只留最新
@@ -247,6 +285,7 @@ class HudDevice:
         if self._pending is not None and send is self._send:
             self._last_frame_ts = time.monotonic()
             frame, self._pending = self._pending, None
+            self._battery_pending = None   # 合并后的这一帧已经带上了提示，且确实发出去了
             await self._safe_send(send, frame)
 
     async def _safe_send(self, send: SendFunc | None, frame: dict) -> None:

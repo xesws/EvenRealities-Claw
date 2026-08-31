@@ -55,7 +55,7 @@
 EvenRealities-Claw/
 ├── REPORT.md                  ← 本报告
 ├── README.md                  ← 项目入口与文档索引
-├── protocol/PROTOCOL.md       ← 插件↔网关 WS 协议 v1（认证/渲染帧/时序图）
+├── protocol/PROTOCOL.md       ← 插件↔网关 WS 协议 v1.1（认证/渲染帧/遥测上行/时序图）
 ├── gateway/                   ← 服务器端（Python 3.9 / aiohttp）
 │   ├── lens_gateway/
 │   │   ├── server.py          ← HTTP/WS 服务与路由 + 会话 TTL 回收
@@ -75,7 +75,7 @@ EvenRealities-Claw/
 │   │   ├── auth.py            ← 配对码/设备 JWT/吊销
 │   │   ├── config.py          ← 配置定义（运行时配置在 ~/.lens-gateway/）
 │   │   └── main.py            ← CLI：serve / pair-code / devices / revoke
-│   ├── tests/                 ← 208 单测 + e2e_sim.py（22 项端到端）+ fixtures 语音
+│   ├── tests/                 ← 236 单测 + e2e_sim.py（28 项端到端）+ fixtures 语音
 │   ├── requirements.txt
 │   └── README.md              ← 网关模块说明与实测数据
 ├── plugin/                    ← 手机端插件（TypeScript / Vite / 官方 SDK ^0.0.14）
@@ -164,7 +164,9 @@ EvenRealities-Claw/
 - 启动时按协议布局契约调 `createStartUpPageContainer` 建 3 个文本容器：状态条(0,0,576×32) / 正文(0,32,576×220) / 页脚(0,252,576×36)，失败码（oversize/outOfMemory）直接显示在手机页；
 - `textContainerUpgrade` 写入：120ms 防抖 + 只写内容变化的容器 + 串行写（BLE 渲染队列慢——官方 asr 模板同款策略）；空内容用单个空格兜底（防 protobuf 零值省略吃掉清屏指令）；
 - 镜腿事件：单击=翻页（发 `page next`）、双击=`shutDownPageContainer(1)` 退出插件（官方标准手势）；CLICK_EVENT=0 在 protobuf 零值省略下会变 undefined——已按官方模板做归一处理；
-- `onDeviceStatusChanged`：眼镜电量/佩戴状态显示在手机页。
+- `onDeviceStatusChanged`：眼镜电量/佩戴状态显示在手机页，**并按协议 v1.1 上报给网关**。
+  上报前先用 `getDeviceInfo()` 的 `model` + `sn` 判定这是不是眼镜 —— `DeviceStatus` 里
+  只有 sn 没有 model，而 R1 戒指与眼镜走同一套推送，不判定就会把戒指电量报成眼镜电量。
 
 **连接层（`ws.ts`）**
 - 重连：指数退避 1/2/4/8/16/30s + 抖动，单飞锁（不会重连风暴）；
@@ -207,12 +209,13 @@ EvenRealities-Claw/
 
 | 验证 | 范围 | 结果 |
 |---|---|---|
-| `gateway/tests/`（pytest） | 字形度量/折行禁则/像素盒分页/净化/markdown 降级/版式契约/配对/JWT/吊销/过期/持久化，含 3 宽度 × 31 语料的参数化不变量与 600 例随机模糊 | **208/208** |
+| `gateway/tests/`（pytest） | 字形度量/折行禁则/像素盒分页/净化/markdown 降级/版式契约/配对/JWT/吊销/过期/持久化，含 3 宽度 × 31 语料的参数化不变量与 600 例随机模糊 | **236/236** |
 | **设备抽象层**（`tests/test_device.py`） | 帧节流与 coalescing、seq 单调、状态迁移、翻页四触发源等价与边界、租约冲突/续租/过期/抢占、外部渲染走同一排版引擎、事件缓冲增量拉取、快照结构 | **24/24** |
 | **会话装配与回收**（`tests/test_session.py`） | S5 工具态接活、错误分支、`reset` 重新注入小屏风格、消息路由、会话 TTL 只回收「离线且静默」、启动钩子只注册一次、ASR warmup 幂等 | **16/16** |
 | **排版引擎 vs 官方 pretext** | 17 075 码点的 advance + 1 376 个折行用例逐条比对（外部 oracle） | **零分歧** |
 | 插件构建链 | `npm install && tsc --noEmit && vite build`（strict 模式） | 全绿 |
-| 插件桥接冒烟（vitest + jsdom） | 真 SDK + 真 `GlassesController` + 保真夹具：建页只能一次/rebuild 接力、写失败不毒化去重缓存、BLE 卡死 5s 超时、缺字静默丢弃、折行与 pretext 一致、溢出裁行、前台进出 vs 真退出、5 手势 × 4 来源、未知 eventType 不变幽灵翻页、遥测读回、麦被抢 | **26/26** |
+| 插件桥接冒烟（vitest + jsdom） | 真 SDK + 真 `GlassesController` + 保真夹具：建页只能一次/rebuild 接力、写失败不毒化去重缓存、BLE 卡死 5s 超时、缺字静默丢弃、折行与 pretext 一致、溢出裁行、前台进出 vs 真退出、5 手势 × 4 来源、未知 eventType 不变幽灵翻页、**遥测组装与 R1 戒指过滤**、麦被抢 | **30/30** |
+| **遥测上行通路**（`tests/test_telemetry.py`） | 无数据返回 None 而非零值、SN 出网关只留后 4 位、戒指整条拒收并计数、未确认型号同样拒收、字段白名单、poll 标注"可能是缓存"、过期仍返回最后已知值、cmd/cmd_result 一次性与重连作废、失败回执不覆盖已知值、低电量页脚只出现一次 | **28/28** |
 | 插件字形与契约 | 用官方 pretext 逐字校验所有会上屏的字符；反向断言被替换的 10 个旧字形确实缺失；版式自洽 | **10/10** |
 | **官方模拟器实测** `tools/g2probe.mjs` | 8 屏自动化：满画布建页返回码、缺字渲染、26 个字形逐格墨迹判定、内容上限字节/字符口径 | 见 [docs/GLYPH-TABLE.md](docs/GLYPH-TABLE.md)、[docs/HARDWARE-SPEC.md](docs/HARDWARE-SPEC.md) |
 | 插件 WS 协议冒烟（存根网关） | 配对→resume→翻页→PTT 上行→看门狗→退避重连→自动 refresh→旧 seq 丢弃 | ⚠️ **仍未实现**（桥接层已覆盖，WS 层尚未，见 §13） |
@@ -346,7 +349,9 @@ $VENV -m lens_gateway.main revoke dev_xxx  # 吊销某台手机（怀疑凭证�
     "throttle_ms": 500,           // 内容帧最小间隔 ← 真机刷新实测后调
     "confirm_seconds": 1.2,       // 转写确认停留
     "reading_idle_seconds": 60.0, // 阅读态无操作回待机
-    "session_ttl_seconds": 86400  // 离线且静默超过此时长的会话被回收（0 = 永不）
+    "session_ttl_seconds": 86400, // 离线且静默超过此时长的会话被回收（0 = 永不）
+    "telemetry_stale_seconds": 60,// 遥测超过此时长未更新即标 stale（协议 v1.1）
+    "battery_warn_percent": 15    // 低于此电量在页脚提示一次（0 = 关闭）
   },
   "openclaw": {
     "url": "ws://127.0.0.1:18789",            // 工部网关
@@ -374,7 +379,7 @@ systemctl --user restart lens-gateway
 ```bash
 cd ~/EvenRealities-Claw/gateway
 .venv/bin/pip install -r requirements-dev.txt      # 测试依赖（pytest / pytest-asyncio）
-PYTHONPATH=. .venv/bin/pytest tests/ -q            # 208 单测，秒级
+PYTHONPATH=. .venv/bin/pytest tests/ -q            # 236 单测，秒级
 PYTHONPATH=. .venv/bin/python tests/e2e_sim.py     # 端到端，自足运行（~2 分钟）
 ```
 
@@ -540,12 +545,13 @@ PYTHONPATH=. .venv/bin/python tests/e2e_sim.py
 |---|---|---|
 | `lens_gateway/formatting/`（排版引擎） | 971 | **168**（含 3 宽度 × 31 语料参数化 + 600 例随机模糊 + 官方 oracle 比对） |
 | `auth.py` | 106 | 含在上述 168 内 |
-| `device/hud.py`（设备抽象 + 帧租约） | 330 | **24** |
-| `session.py`（装配）+ `voice/pipeline.py` + `server.py` 会话回收 | 560 | **16** |
+| `device/hud.py`（设备抽象 + 帧租约 + 低电量提示） | 380 | **24** |
+| `device/telemetry.py`（遥测缓存） | 130 | **28**（与上行通路合计） |
+| `session.py`（装配 + 遥测路由）+ `voice/pipeline.py` + `server.py` 会话回收 | 620 | **16** |
 | `asr.py` + `openclaw.py` + `server.py` 其余部分 | ~640 | 端到端覆盖，无独立单测（排在 M7） |
-| `plugin/src/`（TypeScript） | ~1400 | **36**（桥接层 26 + 字形契约 10；WS 层仍为 0） |
+| `plugin/src/`（TypeScript） | ~1500 | **40**（桥接层 30 + 字形契约 10；WS 层仍为 0） |
 
-端到端：`tests/e2e_sim.py` **22/22**，自足运行、不依赖任何仓库外服务。
+端到端：`tests/e2e_sim.py` **28/28**，自足运行、不依赖任何仓库外服务。
 仓库**仍无 CI**（无 `.github/`），排在 M7。
 
 ### 13.6 真正只能靠真机判定的（6 项）

@@ -126,6 +126,13 @@ const client = new LensClient({
     if (code === 'busy') ui.toast(message ?? '上一条还在处理，说"打断"或稍等');
     else ui.toast(message ?? `服务器错误（${code}）`);
   },
+  async onCmd(cmd) {
+    // 协议 v1.1：目前只有 telemetry 一条。不认识的命令**抛错**，
+    // 让网关收到 ok:false —— 假装成功会让它把空对象当成真实遥测。
+    if (cmd !== 'telemetry') throw new Error(`unsupported cmd: ${cmd}`);
+    if (!glasses) throw new Error('no_bridge');
+    return glasses.telemetry();
+  },
 });
 
 /** 停掉正在进行的录音（关麦 + 通知网关），供多处复用。 */
@@ -213,6 +220,11 @@ async function bootstrap(): Promise<void> {
       },
       onDeviceStatus(status) {
         ui.setGlassesStatus(formatGlassesStatus(status));
+      },
+      onTelemetry(telemetry) {
+        // 设备真的报了状态变化 ⇒ 主动上报。这是网关唯一"新鲜"的遥测来源；
+        // 网关那边的 poll 只能拿到手机可能缓存的值（见 device/telemetry.py）。
+        client.sendTelemetry(telemetry);
       },
     });
 

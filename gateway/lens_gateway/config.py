@@ -64,6 +64,8 @@ class ComposerConfig:
     reading_idle_seconds: float = 60.0   # 阅读态无操作回待机
     final_short_linger_seconds: float = 15.0
     session_ttl_seconds: float = 86400.0  # 修 S4：离线且静默超过此时长的会话被回收（0=永不）
+    telemetry_stale_seconds: float = 60.0  # 遥测超过此时长未更新即标记 stale（协议 v1.1）
+    battery_warn_percent: int = 15        # 低于此电量在页脚提示一次（0=关闭）
 
     def __post_init__(self) -> None:
         if self.throttle_ms < 0:
@@ -77,6 +79,10 @@ class ComposerConfig:
                           ("session_ttl_seconds", self.session_ttl_seconds)):
             if val < 0:
                 raise ValueError(f"{name} 不能为负：{val}")
+        if self.telemetry_stale_seconds <= 0:
+            raise ValueError(f"telemetry_stale_seconds 必须为正：{self.telemetry_stale_seconds}")
+        if not 0 <= self.battery_warn_percent <= 100:
+            raise ValueError(f"battery_warn_percent 应在 [0, 100]：{self.battery_warn_percent}")
 
 
 @dataclass
