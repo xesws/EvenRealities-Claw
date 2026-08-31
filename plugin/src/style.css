@@ -16,6 +16,12 @@
   -webkit-tap-highlight-color: transparent;
 }
 
+/* hidden 属性必须能压过组件自己的 display（.screen 等用了 display:flex，
+   否则 screenPair.hidden = true 不生效，配对屏会和主屏叠在一起）。 */
+[hidden] {
+  display: none !important;
+}
+
 html,
 body {
   margin: 0;
@@ -198,6 +204,14 @@ button.danger {
   transform-origin: top left;
 }
 
+/*
+ * 手机端预览必须**照着 G2 的真实能力画**，否则它就是在撒谎：
+ *   - 没有字号控制  → 三个区一律同一字号（按 CJK advance 20px 取）
+ *   - 行高恒 27px   → 不是 44px
+ *   - 只能左对齐    → 页脚不能右对齐（G2 上"居中/右对齐"只能靠补空格）
+ *   - 亮度只有 5 级 → 用 opacity 近似 textColor 0~4，由 ui.ts 从 HUD 契约读
+ * 几何（top/height）也由 ui.ts 从 protocol/hud-contract.json 注入，不写死在这里。
+ */
 .pv {
   position: absolute;
   left: 0;
@@ -205,30 +219,9 @@ button.danger {
   white-space: pre-wrap;
   word-break: break-all;
   overflow: hidden;
-}
-
-.pv-status {
-  top: 0;
-  height: 32px;
-  font-size: 24px;
-  line-height: 32px;
-  color: #79e8ad;
-}
-
-.pv-body {
-  top: 32px;
-  height: 220px;
-  font-size: 32px;
-  line-height: 44px;
-}
-
-.pv-foot {
-  top: 252px;
-  height: 36px;
-  font-size: 24px;
-  line-height: 36px;
-  color: #79e8ad;
-  text-align: right;
+  font-size: 20px;
+  line-height: 27px;
+  text-align: left;
 }
 
 .glasses-row {

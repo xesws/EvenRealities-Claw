@@ -7,14 +7,24 @@
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "simulate": "node node_modules/@evenrealities/evenhub-simulator/bin/index.js http://localhost:5173",
+    "pack": "vite build && evenhub pack app.json dist --sdk-ver 0.0.14 -o openclaw-lens.ehpk",
+    "probe": "node tools/g2probe.mjs"
   },
   "dependencies": {
-    "@evenrealities/even_hub_sdk": "0.0.10"
+    "@evenrealities/even_hub_sdk": "^0.0.14",
+    "@evenrealities/pretext": "^0.1.4"
   },
   "devDependencies": {
+    "@evenrealities/evenhub-cli": "^0.1.14",
+    "@evenrealities/evenhub-simulator": "^0.9.4",
     "@types/node": "^22.10.0",
+    "jsdom": "^25.0.1",
     "typescript": "^5.7.0",
-    "vite": "^6.0.0"
+    "vite": "^6.0.0",
+    "vitest": "^3.2.7"
   }
 }

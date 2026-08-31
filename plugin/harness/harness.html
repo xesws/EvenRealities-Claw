@@ -65,6 +65,16 @@
         cursor: pointer;
       }
       .controls button:hover { border-color: var(--green); }
+      .controls select, .controls input[type='number'] {
+        font: inherit;
+        background: var(--panel);
+        color: var(--fg);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 9px 10px;
+      }
+      .controls.fx { font-size: 13px; color: var(--dim); }
+      .controls.fx label { display: flex; align-items: center; gap: 5px; cursor: pointer; }
       .mic { font-size: 13px; color: var(--dim); }
       .mic em { color: var(--green); font-style: normal; }
       .log {
@@ -104,9 +114,38 @@
           <div id="glassesScreen" class="glasses-screen"></div>
         </div>
         <div class="controls">
-          <button id="btnTap">单击镜腿（翻页）</button>
-          <button id="btnDouble">双击镜腿（退出）</button>
-          <button id="btnDrop">断网模拟（关 WS）</button>
+          <select id="gestureKind">
+            <option value="tap">单击（CLICK，eventType 缺省）</option>
+            <option value="doubleTap">双击（DOUBLE_CLICK=3）</option>
+            <option value="swipeUp">上滑（SCROLL_TOP=1）</option>
+            <option value="swipeDown">下滑（SCROLL_BOTTOM=2）</option>
+            <option value="longPress">长按（LONG_PRESS=9）</option>
+            <option value="longPressRelease">长按松开（=10）</option>
+          </select>
+          <select id="gestureSource">
+            <option value="glassesR">右镜腿（1）</option>
+            <option value="glassesL">左镜腿（3）</option>
+            <option value="ring">R1 戒指（2）</option>
+            <option value="unknown">来源缺省（0，字段省略）</option>
+          </select>
+          <button id="btnGesture">发送手势</button>
+        </div>
+        <div class="controls">
+          <button id="btnFgEnter">前台进入(4)</button>
+          <button id="btnFgExit">前台退出(5) · 不该断 WS</button>
+          <button id="btnExit">系统退出(7)</button>
+          <button id="btnAbnormal">异常退出(6)</button>
+          <button id="btnDrop">断网（关 WS）</button>
+          <button id="btnBattery">推低电量 12%</button>
+          <button id="btnUnworn">推未佩戴</button>
+          <button id="btnStats">打印统计/屏上文本</button>
+        </div>
+        <div class="controls fx">
+          <span class="mic">故障注入：</span>
+          <label><input type="checkbox" id="fxUpgradeFail" />textContainerUpgrade 恒失败</label>
+          <label><input type="checkbox" id="fxMicDenied" />麦克风被抢占</label>
+          <label><input type="checkbox" id="fxHang" />bridge 卡死（测 5s 超时）</label>
+          <label>BLE 延迟 <input type="number" id="fxDelay" value="0" min="0" step="50" style="width:70px" /> ms</label>
           <span class="mic">麦克风：<em id="micState">关闭</em></span>
         </div>
         <div id="mockLog" class="log"></div>

@@ -12,28 +12,48 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from dataclasses import replace
 from typing import Awaitable, Callable
 
 from .asr import AsrEngine, StablePrefixTracker
 from .config import Config
 from .openclaw import OpenClawClient
-from .textkit import Paginator, tail_window
+from .formatting import DEFAULT_LAYOUT, Box, Paginator, glyph_set, tail_window
 
 log = logging.getLogger(__name__)
 
 SendFunc = Callable[[dict], Awaitable[None]]
 
-# lens 会话首条消息注入的小屏风格指令（红队 R7：独立会话 + 输出风格）
-STYLE_HEADER = (
-    "[系统指令：用户正通过智能眼镜 HUD 与你对话。屏幕一页仅约 85 个汉字。"
-    "回答要求：先结论后细节；短句；不用 markdown、表格、代码块；"
-    "非必要不超过 170 字；列表用「一是…二是…」行文。]\n\n"
-)
-
-_STATE_GLYPH = {
-    "S0": "·", "S2": "◉ 聆听", "S3": "→", "S4": "◔ 思考",
-    "S5": "⚙ 工具", "S6": "▸ 回答", "S7": "✓ 完成", "S8": "✕ 出错",
+# HUD 状态 → 语义字形名 + 中文词。字形本身由 GlyphSet 决定（真机字库外的字形已被换掉）。
+_STATE_LABEL: dict[str, tuple[str, str]] = {
+    "S0": ("idle", ""),
+    "S2": ("listening", "聆听"),
+    "S3": ("transcribing", "转写中"),
+    "S4": ("thinking", "思考"),
+    "S5": ("tool", "工具"),
+    "S6": ("answering", "回答"),
+    "S7": ("done", "完成"),
+    "S8": ("error", "出错"),
 }
+
+# 一个 CJK 字形在 G2 上的宽度，用来把「像素预算」翻译成模型能理解的「多少个汉字」
+_CJK_PX = 20
+
+
+def style_header(box: Box) -> str:
+    """按**真实版式**生成注入给模型的小屏风格指令（红队 R7：独立会话 + 输出风格）。
+
+    以前这里硬编码「一页约 85 个汉字 / 不超过 170 字」，而那是按 5 行 × 17 字算的 ——
+    真实版式是 8 行 × 28 字。写死的数字会让模型按错误的预算写作，每页都溢出。
+    """
+    per_line = box.inner_width // _CJK_PX
+    per_page = box.max_lines * per_line
+    return (
+        f"[系统指令：用户正通过智能眼镜 HUD 与你对话。屏幕一页约 {per_page} 个汉字"
+        f"（{box.max_lines} 行 × 每行约 {per_line} 字）。"
+        "回答要求：先结论后细节；短句；不用 markdown、表格、代码块；"
+        f"非必要不超过 {per_page * 2} 字；列表用「一是…二是…」行文。]\n\n"
+    )
 
 
 def _fmt_secs(s: float) -> str:
@@ -55,6 +75,14 @@ class DeviceSession:
         self.current_frame: dict = {}
         self._style_sent = False
 
+        # 版式与字形：像素版式是唯一真源；字形表在构造时按 G2 字库自校验
+        self.layout = DEFAULT_LAYOUT
+        if cfg.composer.body_safety_px:
+            body = self.layout.body
+            self.layout = replace(self.layout, body=replace(body, safety_px=cfg.composer.body_safety_px))
+        self.glyphs = glyph_set(cfg.composer.glyph_profile, cfg.composer.glyph_overrides or None)
+        self.badge = cfg.openclaw.agent_label   # 修 S3：这个配置项以前从未被读取
+
         # PTT / 聆听
         self._pcm = bytearray()
         self._listening = False
@@ -63,11 +91,8 @@ class DeviceSession:
         self._tracker = StablePrefixTracker()
         self._partial_task: asyncio.Task | None = None
 
-        # 回复 / 阅读
-        self._paginator = Paginator(
-            lines_per_page=cfg.composer.lines_per_page, wrap_chars=cfg.composer.wrap_chars)
-        self._page = 0
-        self._follow = True  # 流式自动跟最新页
+        # 回复 / 阅读。页码与跟随标志都在 Paginator 内部（修 F7：页脚与正文必然同源）
+        self._paginator = Paginator(box=self.layout.body, glyphs=self.glyphs)
         self._last_question = ""
 
         # 节流
@@ -93,6 +118,24 @@ class DeviceSession:
         if self._listening:
             asyncio.ensure_future(self._cancel_listening())
 
+    # ---------- 状态条 ----------
+
+    def _status(self, state: str, suffix: str = "", *, word: str | None = None,
+                glyph: str | None = None) -> str:
+        """组状态条：徽记 + 字形 + 中文词 (+ 附加信息)。
+
+        修 S2：以前翻页时状态条被就地重写成 ``f"工 {glyph}"``，把「回答」「完成」
+        这些词丢掉了 —— 同一个状态在首次渲染和翻页后长得不一样。现在只有这一个入口。
+        """
+        name, default_word = _STATE_LABEL[state]
+        parts = [self.badge, glyph if glyph is not None else self.glyphs[name]]
+        w = default_word if word is None else word
+        if w:
+            parts.append(w)
+        if suffix:
+            parts.append(suffix)
+        return " ".join(p for p in parts if p)
+
     # ---------- 帧发送 ----------
 
     def _build(self, state: str, status: str, body: str, foot: str, **meta) -> dict:
@@ -101,7 +144,7 @@ class DeviceSession:
             "type": "frame", "seq": self.seq, "state": state,
             "containers": {"status": status, "body": body, "foot": foot},
             "meta": {"rec": self._listening, "agent": "gongbu",
-                     "page": {"cur": self._page + 1, "total": self._paginator.total}, **meta},
+                     "page": {"cur": self._paginator.cur + 1, "total": self._paginator.total}, **meta},
         }
 
     def _emit(self, state: str, status: str, body: str, foot: str = "", urgent: bool = False, **meta) -> None:
@@ -140,7 +183,7 @@ class DeviceSession:
 
     def _emit_idle(self, urgent: bool = False) -> None:
         self._cancel_timer()
-        self._emit("S0", "·", "", "", urgent=urgent)
+        self._emit("S0", self.glyphs["idle"], "", "", urgent=urgent)
 
     # ---------- 计时器 ----------
 
@@ -197,7 +240,7 @@ class DeviceSession:
         self._listening = True
         self._listen_started = time.monotonic()
         self._last_audio = self._listen_started
-        self._emit("S2", "工 ◉ 聆听 0:00", "", urgent=True)
+        self._emit("S2", self._status("S2", "0:00"), "", urgent=True)
         if self._partial_task is None or self._partial_task.done():
             self._partial_task = asyncio.ensure_future(self._partial_loop())
 
@@ -211,9 +254,11 @@ class DeviceSession:
                 elapsed = time.monotonic() - self._listen_started
                 # mic 看门狗（R2）：>800ms 无音频帧 = mic 被抢/链路断
                 if time.monotonic() - self._last_audio > 0.8 and elapsed > 1.0:
-                    self._emit("S2", "工 ⚠ 无音频", "麦克风没有声音\n请松开重试", urgent=True)
+                    self._emit("S2", self._status("S2", word="无音频",
+                                                  glyph=self.glyphs["warning"]),
+                               "麦克风没有声音\n请松开重试", urgent=True)
                     continue
-                status = f"工 ◉ 聆听 {_fmt_secs(elapsed)}"
+                status = self._status("S2", _fmt_secs(elapsed))
                 if len(self._pcm) < 3200:
                     self._emit("S2", status, "")
                     continue
@@ -222,8 +267,10 @@ class DeviceSession:
                     break
                 stable, tail = self._tracker.update(text)
                 shown = (stable + tail).strip()
-                body = tail_window(shown + "▌", self.cfg.composer.wrap_chars,
-                                   self.cfg.composer.lines_per_page) if shown else ""
+                body = tail_window(shown + self.glyphs["cursor"],
+                                   self.layout.body.inner_width,
+                                   self.layout.body.max_lines,
+                                   ellipsis=self.glyphs["ellipsis"]) if shown else ""
                 self._emit("S2", status, body)
         except asyncio.CancelledError:
             pass
@@ -242,21 +289,24 @@ class DeviceSession:
         if len(pcm) < 16000:  # <0.5s 视为误触
             self._emit_idle(urgent=True)
             return
-        self._emit("S3", "工 … 转写中", "", urgent=True)
+        self._emit("S3", self._status("S3"), "", urgent=True)
         result = await self.asr.final(pcm)
         if not result.text:
-            self._emit("S8", "工 ✕ 未听清", "没听清，请再说一次", urgent=True)
+            self._emit("S8", self._status("S8", word="未听清"),
+                       "没听清，请再说一次", urgent=True)
             self._start_timer(lambda: self._idle_after(5))
             return
         if self.claw.session_busy(self.session_key):
-            self._emit("S8", "工 ⚠ 占用", "上一条还在跑\n点「打断」后再说", urgent=True)
+            self._emit("S8", self._status("S8", word="占用", glyph=self.glyphs["warning"]),
+                       "上一条还在跑\n点「打断」后再说", urgent=True)
             self._start_timer(lambda: self._idle_after(8))
             return
         low_conf = result.avg_logprob < self.cfg.composer.low_conf_threshold
         wait = (self.cfg.composer.confirm_seconds_low_conf if low_conf
                 else self.cfg.composer.confirm_seconds)
         hint = "请核对文字…" if low_conf else ""
-        self._emit("S3", "→ 工部", result.text, hint, urgent=True)
+        self._emit("S3", f'{self.glyphs["transcribing"]} {self.cfg.openclaw.agent_name}',
+                   result.text, hint, urgent=True)
         self._confirm_task = asyncio.ensure_future(self._confirm_then_send(result.text, wait))
 
     async def _confirm_then_send(self, text: str, wait: float) -> None:
@@ -270,12 +320,10 @@ class DeviceSession:
 
     async def _dispatch(self, text: str) -> None:
         self._last_question = text
-        message = text if self._style_sent else STYLE_HEADER + text
-        self._paginator.set_text("")
-        self._page = 0
-        self._follow = True
+        message = text if self._style_sent else style_header(self.layout.body) + text
+        self._paginator.reset()
         started = time.monotonic()
-        self._emit("S4", "工 ◔ 思考 0s", text, urgent=True)
+        self._emit("S4", self._status("S4", "0s"), text, urgent=True)
 
         async def thinking_timer() -> None:
             try:
@@ -285,7 +333,7 @@ class DeviceSession:
                         break
                     s = int(time.monotonic() - started)
                     extra = "\n仍在思考·点「打断」可停止" if s > 30 else ""
-                    self._emit("S4", f"工 ◔ 思考 {s}s", self._last_question + extra)
+                    self._emit("S4", self._status("S4", f"{s}s"), self._last_question + extra)
             except asyncio.CancelledError:
                 pass
 
@@ -299,7 +347,7 @@ class DeviceSession:
                 self._on_reply_text(payload, final=True)
             elif kind == "error":
                 self._cancel_timer()
-                self._emit("S8", "工 ✕ 出错", f"{payload[:30]}\n按住说话可重试", urgent=True)
+                self._emit("S8", self._status("S8"), f"{payload[:30]}\n按住说话可重试", urgent=True)
                 self._start_timer(lambda: self._idle_after(15))
 
         try:
@@ -307,45 +355,37 @@ class DeviceSession:
         except Exception as exc:
             log.exception("chat_send failed")
             self._cancel_timer()
-            self._emit("S8", "工 ✕ 出错", f"无法连接 agent\n{str(exc)[:24]}", urgent=True)
+            self._emit("S8", self._status("S8"), f"无法连接 agent\n{str(exc)[:24]}", urgent=True)
             self._start_timer(lambda: self._idle_after(15))
 
     def _on_reply_text(self, full_text: str, final: bool) -> None:
         self._cancel_timer()
-        self._paginator.set_text(full_text)
-        total = self._paginator.total
-        if self._follow:
-            self._page = total - 1
+        p = self._paginator
+        p.set_text(full_text)   # 内部已按 follow 跟到末页并夹紧 cur（修 F7）
         if not final:
-            foot = f"‹{total}" if total > 1 else ""
-            if not self._follow:
-                foot = f"{self._page + 1}/{total} ⏸"
-            self._emit("S6", "工 ▸ 回答", self._paginator.page_text(self._page), foot)
+            # 用户往回翻过 → 页脚带暂停标记，提示「新内容还在来，但画面钉住了」
+            suffix = "" if p.follow else self.glyphs["paused"]
+            self._emit("S6", self._status("S6"), p.page_text(), p.footer(suffix))
         else:
-            foot = f"{self._page + 1}/{total} ›" if total > 1 else ""
-            self._emit("S7", "工 ✓ 完成", self._paginator.page_text(self._page), foot, urgent=True)
-            linger = (self.cfg.composer.final_short_linger_seconds if total == 1
+            self._emit("S7", self._status("S7"), p.page_text(), p.footer(), urgent=True)
+            linger = (self.cfg.composer.final_short_linger_seconds if p.total == 1
                       else self.cfg.composer.reading_idle_seconds)
             self._start_timer(lambda: self._idle_after(linger))
 
     # ---------- 翻页 / 打断 ----------
 
     def _turn_page(self, delta: int) -> None:
+        """翻页。触发源解耦：镜腿 / 手机按钮 / MCP / 语音都走这一个入口。"""
         if self.state not in ("S6", "S7"):
             return
-        total = self._paginator.total
-        new = max(0, min(self._page + delta, total - 1))
-        if new == self._page:
-            return
-        self._page = new
-        if self.state == "S6":
-            self._follow = new == total - 1  # 翻回最末页恢复跟随
-            foot = f"{new + 1}/{total}" + ("" if self._follow else " ⏸")
-        else:
-            foot = f"{new + 1}/{total} ›"
+        p = self._paginator
+        if not p.turn(delta):
+            return   # 已在边界：不动，也不发冗余帧
+        suffix = "" if (self.state != "S6" or p.follow) else self.glyphs["paused"]
+        if self.state == "S7":
             self._start_timer(lambda: self._idle_after(self.cfg.composer.reading_idle_seconds))
-        glyph = _STATE_GLYPH[self.state]
-        self._emit(self.state, f"工 {glyph}", self._paginator.page_text(new), foot, urgent=True)
+        self._emit(self.state, self._status(self.state), p.page_text(),
+                   p.footer(suffix), urgent=True)
 
     async def _abort(self, silent: bool = False) -> None:
         if self._confirm_task and not self._confirm_task.done():
@@ -361,9 +401,8 @@ class DeviceSession:
         if silent:
             return
         if self._paginator.total > 1 or self._paginator.page_text(0):
-            total = self._paginator.total
-            self._emit("S7", "工 ⏹ 已打断", self._paginator.page_text(self._page),
-                       f"{self._page + 1}/{total} ›" if total > 1 else "", urgent=True)
+            self._emit("S7", self._status("S7", word="已打断", glyph=self.glyphs["stopped"]),
+                       self._paginator.page_text(), self._paginator.footer(), urgent=True)
             self._start_timer(lambda: self._idle_after(self.cfg.composer.reading_idle_seconds))
         else:
             self._emit_idle(urgent=True)

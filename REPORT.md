@@ -62,14 +62,21 @@ EvenRealities-Claw/
 │   │   ├── session.py         ← HUD 状态机 + 帧节流（核心）
 │   │   ├── asr.py             ← faster-whisper 双模型管线
 │   │   ├── openclaw.py        ← 工部网关适配器
-│   │   ├── textkit.py         ← CJK 折行/分页/markdown 剥离
+│   │   ├── formatting/        ← 排版引擎（像素盒分页，与官方 pretext 度量逐条对齐）
+│   │   │   ├── metrics.py     ←   G2 字形度量的 Python 复刻（advance+kerning+逐字取整）
+│   │   │   ├── wrap.py        ←   折行 + 中文禁则（行首/行尾禁排，追出与悬挂）
+│   │   │   ├── paginate.py    ←   像素盒分页（8 行/页）+ 锚点 + 页脚
+│   │   │   ├── layout.py      ←   容器版式（读 protocol/hud-contract.json）
+│   │   │   ├── glyphs.py      ←   语义字形表 + import 时在库校验
+│   │   │   ├── sanitize.py    ←   控制字符/双向覆盖/伪状态条剔除
+│   │   │   └── markdown.py    ←   markdown 降级
 │   │   ├── auth.py            ← 配对码/设备 JWT/吊销
 │   │   ├── config.py          ← 配置定义（运行时配置在 ~/.lens-gateway/）
 │   │   └── main.py            ← CLI：serve / pair-code / devices / revoke
-│   ├── tests/                 ← 26 单测 + e2e_sim.py（14 项端到端）+ fixtures 语音
+│   ├── tests/                 ← 168 单测 + e2e_sim.py（22 项端到端）+ fixtures 语音
 │   ├── requirements.txt
 │   └── README.md              ← 网关模块说明与实测数据
-├── plugin/                    ← 手机端插件（TypeScript / Vite / 官方 SDK 0.0.10）
+├── plugin/                    ← 手机端插件（TypeScript / Vite / 官方 SDK ^0.0.14）
 │   ├── app.json               ← Even Hub 清单（含 g2-microphone 权限）
 │   ├── src/                   ← glasses.ts / ws.ts / ui.ts / store.ts / main.ts / types.ts
 │   ├── harness/               ← 浏览器模拟器（mock 官方桥 + 假眼镜屏）
@@ -125,10 +132,23 @@ EvenRealities-Claw/
 - 会话对象跨 WS 重连存活（服务器持有全部状态，R1/R6）；
 - 与工部的会话用独立 sessionKey `lens:<deviceId>`（与 Discord 会话完全隔离，R7），首条消息注入小屏风格指令：先结论后细节、短句、禁 markdown/表格、非必要 ≤170 字。
 
-**排版引擎（`textkit.py`）**
-- 折行：17 汉字/行（半角按半格计），行首禁排闭合标点（。，！？）…）、行尾禁排开放标点（（「《）、拉丁词不跨行切断；
-- markdown 强制剥离：表格降级为「含表格共n行，请在手机查看」、URL 只留域名、代码块 >3 行截断、列表符转「·」；
-- 分页：5 行/页 ≈85 字，非首页第一行携带上页末句 ≤10 字锚点（`…余票充足；二是`），解决整页翻进的上下文断裂。
+**排版引擎（`lens_gateway/formatting/`）**
+
+不是「按字符数猜一个安全宽度」，而是**像素盒 + 真实字形度量**——与固件同一套算法：
+
+- **度量**：`metrics.py` 复刻 LVGL 的 `kerning=(kern*scale)>>4`、`每字宽=(adv+kern+8)>>4`
+  （逐字形取整，不是把 1/16px 累加后再取整）。度量表由 `plugin/tools/extract_metrics.mjs`
+  从官方 `@evenrealities/pretext` 原样导出，**运行时零 Node 依赖**；
+- **外部 oracle**：`tests/test_metrics_oracle.py` 拿官方 pretext 当独立判据，
+  在 **17 075 个码点 + 1 376 个折行用例**上逐条比对，**零分歧**；
+- **折行**：真实像素宽度 + 中文禁则（行首禁排闭合标点、行尾禁排开放标点，用「追出」解决，
+  连续标点退化为悬挂），拉丁长词硬切但不跨行断词；
+- **分页**：`maxLines = floor(容器高 / 27)` ⇒ 正文 216px = **8 行/页 ≈ 224 汉字**
+  （旧实现按 5 行 85 字排，只用掉 38% 的屏幕）；非首页首行携带上页末句的像素截断锚点；
+- **字形**：语义字形表在 **import 时**逐个校验在库，画不出来的字形连进程都起不来
+  （见 [docs/GLYPH-TABLE.md](docs/GLYPH-TABLE.md)）；
+- **净化**：C0/C1 控制字符、双向覆盖字符（U+202A–202E、U+2066–2069）一律剔除，
+  行首的状态字形也会被剥掉（否则模型在正文第一行写「√ 完成」就伪造出第二条状态条）。
 
 **OpenClaw 适配器（`openclaw.py`）**
 - 连 `ws://127.0.0.1:18789`（工部网关，loopback），protocol v3 connect 握手，token 运行时从 `~/.openclaw/openclaw.json` 读取——**手机端永远拿不到这个 token**；
@@ -185,11 +205,14 @@ EvenRealities-Claw/
 
 | 验证 | 范围 | 结果 |
 |---|---|---|
-| `gateway/tests/`（pytest） | 折行禁则/分页锚点/markdown 降级/半角计宽/配对/JWT/吊销/过期/持久化 | **26/26** |
-| 插件构建链 | `npm install && tsc --noEmit && vite build`（strict 模式） | 全绿，bundle 88.7kB |
-| 插件协议冒烟（jsdom + 存根网关） | 配对→resume→零值归一→翻页→PTT 上行→看门狗→退避重连→自动 refresh→旧 seq 丢弃→双击退出 | **25/25** |
-| 心跳看门狗专项 | 停 pong 后 t=60s 准时推断线帧并重连 | 通过 |
-| **端到端闭环** `tests/e2e_sim.py` | 真服务进程+真 ASR+**真工部**：配对→PTT→灌真实语音→转写→回复→帧约束（seq 单调/每行≤17 字/容器结构）→重连 1 帧恢复→reset | **14/14** |
+| `gateway/tests/`（pytest） | 字形度量/折行禁则/像素盒分页/净化/markdown 降级/版式契约/配对/JWT/吊销/过期/持久化，含 3 宽度 × 31 语料的参数化不变量与 600 例随机模糊 | **168/168** |
+| **排版引擎 vs 官方 pretext** | 17 075 码点的 advance + 1 376 个折行用例逐条比对（外部 oracle） | **零分歧** |
+| 插件构建链 | `npm install && tsc --noEmit && vite build`（strict 模式） | 全绿 |
+| 插件桥接冒烟（vitest + jsdom） | 真 SDK + 真 `GlassesController` + 保真夹具：建页只能一次/rebuild 接力、写失败不毒化去重缓存、BLE 卡死 5s 超时、缺字静默丢弃、折行与 pretext 一致、溢出裁行、前台进出 vs 真退出、5 手势 × 4 来源、未知 eventType 不变幽灵翻页、遥测读回、麦被抢 | **26/26** |
+| 插件字形与契约 | 用官方 pretext 逐字校验所有会上屏的字符；反向断言被替换的 10 个旧字形确实缺失；版式自洽 | **10/10** |
+| **官方模拟器实测** `tools/g2probe.mjs` | 8 屏自动化：满画布建页返回码、缺字渲染、26 个字形逐格墨迹判定、内容上限字节/字符口径 | 见 [docs/GLYPH-TABLE.md](docs/GLYPH-TABLE.md)、[docs/HARDWARE-SPEC.md](docs/HARDWARE-SPEC.md) |
+| 插件 WS 协议冒烟（存根网关） | 配对→resume→翻页→PTT 上行→看门狗→退避重连→自动 refresh→旧 seq 丢弃 | ⚠️ **仍未实现**（桥接层已覆盖，WS 层尚未，见 §13） |
+| **端到端闭环** `tests/e2e_sim.py` | 真服务进程 + 真 ASR + agent 测试夹具（`demo/fake_openclaw.py`，protocol v3 同一套，仅回复内容来自剧本）：配对→PTT→灌真实语音→转写→回复→帧约束（seq 单调/行宽/容器结构）→翻页→重连恢复→reset。**自足运行，不依赖任何仓库外服务**；打真 agent 见 §6.6 | 见下方运行输出 |
 | **生产部署冒烟** | systemd 正式实例（非测试实例）整轮问答 | S2→S3→S4→S6→S7，11.0s |
 
 当前服务状态（交付时刻）：`{"ok": true, "asr_ready": true, "openclaw": true}`，服务 enabled（开机自启）+ active。
@@ -255,7 +278,7 @@ EvenRealities-Claw/
 | 退出插件 | **双击镜腿**（官方标准手势，会弹确认） |
 | 换服务器/重新配对 | 主屏设置入口 |
 
-读屏说明：状态条最左 1 个字是 agent 徽记（工=工部），第 2 个符号是状态（◉聆听 ◔思考 ▸回答 ✓完成 ✕错误 ⚠警告）——**瞥一眼这 3 个字符就知道系统在干什么**。回复一页 85 字，右下 `2/3 ›` 是页码。
+读屏说明：状态条最左的符号是状态字形（`●`聆听 `◐`思考 `▶`回答 `√`完成 `×`错误 `！`警告）——**瞥一眼就知道系统在干什么**。这些字形全部经官方度量库与官方模拟器截图双重确认在 G2 字库内（早期用的 `◉◔▸✓✕⚠` 在真机上一个都画不出来，见 [docs/GLYPH-TABLE.md](docs/GLYPH-TABLE.md)）。回复一页 8 行 ≈ 224 汉字，页脚 `‹ 2/3 ›` 是页码。
 
 ### 5.5 注意事项（设计如此，不是 bug）
 
@@ -339,8 +362,19 @@ systemctl --user restart lens-gateway
 
 ```bash
 cd ~/EvenRealities-Claw/gateway
+.venv/bin/pip install -r requirements-dev.txt      # 测试依赖（pytest / pytest-asyncio）
 PYTHONPATH=. .venv/bin/pytest tests/ -q            # 26 单测，秒级
-PYTHONPATH=. .venv/bin/python tests/e2e_sim.py     # 14 项端到端（需工部在线，~2 分钟）
+PYTHONPATH=. .venv/bin/python tests/e2e_sim.py     # 端到端，自足运行（~2 分钟）
+```
+
+`e2e_sim.py` 默认自己拉起 `demo/fake_openclaw.py` 作为 **agent 测试夹具**——它跑的是与真
+网关完全相同的 protocol v3，唯一区别是回复文本来自剧本而非模型。这是测试里的 test
+double，**不是演示链路的替身**：演示必须接真 agent。要拿真 agent 跑同一套断言：
+
+```bash
+LENS_E2E_AGENT_URL=ws://127.0.0.1:18789 \
+LENS_E2E_AGENT_CONFIG=~/.openclaw/openclaw.json \
+PYTHONPATH=. .venv/bin/python tests/e2e_sim.py
 ```
 
 ---
@@ -414,3 +448,92 @@ PYTHONPATH=. .venv/bin/python tests/e2e_sim.py     # 14 项端到端（需工部
 - 语音控制词全集（停/继续/重说/详细/清屏）+ 防误触文法。
 
 ——以上全部细节见 `docs/DESIGN.md` 与 `docs/DEVELOPMENT-PLAN.md`。
+
+
+## 13. 未验证项清单
+
+本节存在的理由：本报告本身是演示材料的一部分，因此必须明确区分「已验证」与「已实现但未验证」
+与「未实现」，并且**每条已验证的结论都要标注它是被什么验证的**（三档归属见
+[docs/SIMULATOR-PARITY.md](docs/SIMULATOR-PARITY.md)）。
+
+> ⚠️ **本节上一版有一条实质性错误，在此更正。**
+> 上一版把「字形可用性」和「真实字宽 / 折行」列为*原理上无真机不可验证*。**这是错的。**
+> 官方 `@evenrealities/pretext` 是复刻固件 LVGL 度量的字形库，官方
+> `evenhub-simulator` v0.7.0+ 带 `--automation-port`，`/api/screenshot/glasses` 直出
+> 576×288 RGBA PNG，且其缺字渲染已用 `LV_USE_FONT_PLACEHOLDER` + lvgl `g2` feature
+> 与固件对齐。两者都在本轮被接进来，这两项**已经判定完毕**（§13.4）。
+> 把可判定的事情记成「等硬件」，代价是几个月里所有排版决策都建立在猜测上 —— 记在这里以免重犯。
+
+### 13.1 曾被声称、但当时仓库内无任何产物
+
+| 声称位置 | 当时状态 | 现在 |
+|---|---|---|
+| §4「插件协议冒烟（jsdom + 存根网关）25/25」 | **不存在** | **部分补上**：`plugin/tests/` 已有 36 个 vitest 用例（桥接层 26 + 字形契约 10），但覆盖的是 **bridge 层**；WS 协议层（配对/resume/退避重连/refresh）的冒烟**仍未实现** |
+| §4「心跳看门狗专项 通过」 | **不存在** | **仍未实现** |
+
+### 13.2 从未在物理 G2 上执行过的代码路径
+
+`plugin/src/glasses.ts` 的全部宿主调用**仍然一次都没有在真机上跑过**。
+但证据基础已经从「对 SDK 类型声明的静态核对」升级为三条可复现的实测：
+
+1. **官方 SDK 实跑**：在 DOM shim 下加载 SDK，实测出全部 `EvenAppMethod` 名、信封形状、
+   `getDeviceInfo()→getGlassesInfo` 的映射、`validateEvenHubPageContainer` 的实际覆盖面、
+   `OsEventTypeList`/`EventSourceType` 全表、以及「未知 eventType 会被解析层吞掉但
+   `jsonData` 原样透传」这个判别依据（见 [docs/HARDWARE-SPEC.md](docs/HARDWARE-SPEC.md) §3.1、§5）。
+2. **官方模拟器实跑**：`plugin/tools/g2probe.mjs` 驱动 8 屏建页/重建，逐屏截图判定。
+3. **保真夹具实跑**：真 SDK + 真 `GlassesController` + 可注入故障的宿主夹具，26 个 vitest 用例。
+
+### 13.3 自建夹具与真机的差距（已大幅收窄）
+
+上一版这里列了 9 条「模拟器上必然通过、检出率为 0」的风险。本轮把其中 7 条修掉了：
+
+| 上一版的风险 | 现状 |
+|---|---|
+| `createStartUpPageContainer` 恒返回 0 | ✅ 已修：只允许调一次，且 invalid/oversize/outOfMemory 三条错误路径都可注入并有用例 |
+| `textContainerUpgrade` 恒返回 true | ✅ 已修：可注入 false，并有「写失败不毒化去重缓存」的回归 |
+| 忽略 `isEventCapture` | ✅ 已修：夹具校验「恰好一个」，官方模拟器侧靠 `/api/input` 点击验证了捕获容器确实收事件 |
+| 所有调用同步返回，无 BLE 延迟 | ✅ 已修：可注入往返延迟与「永不 settle」，后者用于验证 5s 超时保护 |
+| 假屏字号是启发式猜测（`h<=48?24px:32px`） | ✅ 已修：G2 **没有字号控制**，两档字号是虚构的；夹具改为单一字号 + 27px 固定行高，横向位置由 pretext 的累计 advance 定位 |
+| 用桌面字体渲染，12 个特殊字形是否存在「完全未知」 | ✅ 已判定：见 §13.4 与 [docs/GLYPH-TABLE.md](docs/GLYPH-TABLE.md) |
+| 无 mic 被抢 | ✅ 已修：`micDenied` 可注入 |
+| **PCM 载荷推 `number[]`** | ❌ **仍未覆盖**：真机若为 base64 字符串或 `Uint8Array`，归一路径未测（列入 M7） |
+| **麦克风是本地 getUserMedia（毫秒级）** | ❌ **仍未覆盖**：真机 BLE 启麦冷启动延迟无法模拟。已把插件改为「先开麦、确认成功、再发 ptt start」，但 `mic_warmup_seconds` 的真值待真机回填 |
+
+### 13.4 上一版第 6、7 项：**已判定，从真机清单里移除**
+
+- **第 6 项「字形可用性」——已判定。** 两条互相独立的判据（官方度量库 `getAdvW===0`
+  与官方模拟器截图的逐行墨迹统计）在 **26 个字形上 26/26 一致**：
+  仓库早期用的 10 个字形（`◉◔▸⚙⚠⛓✓✕⏸⏹`）**全部画不出来且不留占位框**
+  （截图 `docs/assets/g2probe-01-glyphs-missing.png` 整幅零个不透明像素）；
+  现役 16 个字形全部有墨。明细见 [docs/GLYPH-TABLE.md](docs/GLYPH-TABLE.md)。
+- **第 7 项「`\n` 换行语义」——已解除。** 官方文档站明文：*"'\n' is a line break."*，
+  并在模拟器上按行渲染验证。
+- **附带解决的两项**：满画布 576×288 建页**不触发 `oversize`**
+  （`createStartUpPageContainer → 0`）；单容器内容上限是 **UTF-8 999 字节**而非 1000 字符
+  （999B ✅ / 1002B ❌ / 1000 个 ASCII 字符 ❌ —— 最后一行是决定性的）。
+
+### 13.5 单元测试覆盖
+
+| 范围 | 行数 | 单测 |
+|---|---|---|
+| `lens_gateway/formatting/`（排版引擎） | 971 | **168**（含 3 宽度 × 31 语料参数化 + 600 例随机模糊 + 官方 oracle 比对） |
+| `auth.py` | 106 | 含在上述 168 内 |
+| `session.py`（HUD 状态机）+ `asr.py` + `openclaw.py` + `server.py` | 998 | **0**（拆分与首批单测排在 M3） |
+| `plugin/src/`（TypeScript） | ~1400 | **36**（桥接层 26 + 字形契约 10；WS 层仍为 0） |
+
+端到端：`tests/e2e_sim.py` **22/22**，自足运行、不依赖任何仓库外服务。
+仓库**仍无 CI**（无 `.github/`），排在 M7。
+
+### 13.6 真正只能靠真机判定的（6 项）
+
+上一版列了 8 条，其中「真实字宽」「特殊字形可用性」「`\n` 换行语义」三条已在 §13.4 判定并移除。
+剩下的是：
+
+1. BLE 渲染时序与闪烁（`textContainerUpgrade` 的真实往返延迟与合并窗口）
+2. 镜腿 / 戒指事件是否真的能到达 WebView（**官方模拟器把 `eventSource` 硬编码成 1**，测不了左右与戒指）
+3. 麦克风仲裁与 BLE 启麦延迟（`mic_warmup_seconds` 待回填）
+4. `audioControl` 的单次连续时长上限
+5. 插件在后台 / 锁屏下的存活时长
+6. `FOREGROUND_ENTER/EXIT` 在真机上的实际触发时机
+
+**真机第一天只做标定与复验，不做设计变更。**

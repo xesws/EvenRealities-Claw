@@ -1,8 +1,17 @@
-"""阶段一验收：模拟器端到端闭环。
+"""端到端闭环验收：自足运行，不依赖任何仓库外服务。
 
-模拟插件客户端（纯协议，不依赖浏览器）：
-  启动真实网关（子进程，独立状态目录）→ 配对 → PTT → 灌入真实中文语音(MP3→PCM)
-  → 真实 faster-whisper 转写 → 真实工部 agent 回复 → 校验下行帧流。
+链路：拉起真实网关子进程（独立状态目录）+ agent 测试夹具子进程
+  → 配对 → PTT → 灌入真实中文语音(MP3→PCM) → 真实 faster-whisper 转写
+  → agent 回复 → 校验帧流约束 → 翻页 → 断线重连恢复 → reset。
+
+agent 侧默认使用 `demo/fake_openclaw.py` 作为**测试夹具**：它跑的是与真网关
+完全相同的 protocol v3，唯一区别是回复内容来自剧本而非模型。这是测试里的
+test double，不是演示链路的替身——演示必须接真 agent。
+
+打真 agent 跑同一套断言：
+    LENS_E2E_AGENT_URL=ws://127.0.0.1:18789 \
+    LENS_E2E_AGENT_CONFIG=~/.openclaw/openclaw.json \
+    PYTHONPATH=. .venv/bin/python tests/e2e_sim.py
 
 运行：PYTHONPATH=. .venv/bin/python tests/e2e_sim.py
 """
@@ -12,6 +21,7 @@ import asyncio
 import json
 import os
 import signal
+import socket
 import subprocess
 import sys
 import tempfile
@@ -22,15 +32,40 @@ from pathlib import Path
 import aiohttp
 import numpy as np
 
+ROOT = Path(__file__).resolve().parents[1]          # gateway/
+REPO = ROOT.parent                                  # 仓库根
+sys.path.insert(0, str(ROOT))
+
+from lens_gateway.formatting import (  # noqa: E402
+    DEFAULT_LAYOUT, glyph_set, missing_codepoints, text_width)
+
 PORT = 18900
-ROOT = Path(__file__).resolve().parents[1]
 FIXTURE = ROOT / "tests/fixtures/q3_echo.mp3"
+AGENT_FIXTURE = REPO / "demo" / "fake_openclaw.py"
+
+# 宽度口径与生产代码同源（修 T4：原来用的是脚本自带的近似函数 + 阈值 35）。
+# 现在直接用真实版式的像素宽度 —— 与固件 LVGL 的字形度量逐位一致，见 formatting/metrics.py。
+BODY = DEFAULT_LAYOUT.body
+BUDGET_PX = BODY.inner_width                        # 576px
+MAX_LINES = BODY.max_lines                          # 8 行（27px 固定行高）
+GLYPHS = glyph_set()                                # 与网关默认档位同源
+
+
+def _free_port() -> int:
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return int(s.getsockname()[1])
 
 
 def _load_pcm() -> bytes:
     from faster_whisper.audio import decode_audio
     audio = decode_audio(str(FIXTURE), sampling_rate=16000)
     return (audio * 32768).clip(-32768, 32767).astype(np.int16).tobytes()
+
+
+def line_width(line: str) -> int:
+    """行的真实像素宽度（G2 字形度量）。"""
+    return text_width(line)
 
 
 async def wait_health(timeout: float = 120) -> None:
@@ -47,6 +82,17 @@ async def wait_health(timeout: float = 120) -> None:
     raise TimeoutError("gateway 未就绪")
 
 
+def wait_port(port: int, timeout: float = 15) -> bool:
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        with socket.socket() as s:
+            s.settimeout(0.5)
+            if s.connect_ex(("127.0.0.1", port)) == 0:
+                return True
+        time.sleep(0.2)
+    return False
+
+
 def pair_code() -> str:
     req = urllib.request.Request(f"http://127.0.0.1:{PORT}/admin/pair-code", data=b"", method="POST")
     with urllib.request.urlopen(req, timeout=5) as r:
@@ -56,45 +102,82 @@ def pair_code() -> str:
 CHECKS: list[tuple[str, bool]] = []
 
 
-def check(name: str, ok: bool, detail: str = "") -> None:
-    CHECKS.append((name, ok))
+def check(name: str, ok: bool, detail: str = "") -> bool:
+    """记录一项断言。返回 ok 供调用方决定是否继续依赖该结果。"""
+    CHECKS.append((name, bool(ok)))
     print(f"  {'✓' if ok else '✗'} {name}" + (f"  [{detail}]" if detail else ""))
+    return bool(ok)
 
 
 async def run_client() -> None:
     pcm = _load_pcm()
     frames: list[dict] = []
+
     async with aiohttp.ClientSession() as http:
         ws = await http.ws_connect(f"ws://127.0.0.1:{PORT}/ws")
 
         async def recv_until(pred, timeout=90):
+            """收到匹配帧则返回它；超时返回 None（修 T2：超时是失败，不是崩溃）。"""
             deadline = time.time() + timeout
-            while time.time() < deadline:
-                msg = await ws.receive(timeout=deadline - time.time())
+            while True:
+                left = deadline - time.time()
+                if left <= 0:
+                    return None
+                try:
+                    msg = await ws.receive(timeout=left)
+                except (asyncio.TimeoutError, TimeoutError):
+                    return None
                 if msg.type != aiohttp.WSMsgType.TEXT:
+                    if msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.CLOSING,
+                                    aiohttp.WSMsgType.ERROR):
+                        return None
                     continue
                 obj = json.loads(msg.data)
                 if obj.get("type") == "frame":
                     frames.append(obj)
                 if pred(obj):
                     return obj
-            raise TimeoutError(str(pred))
 
-        # 1. 配对
+        async def expect_no_frame(seconds: float) -> dict | None:
+            """在 seconds 内不应出现任何 frame；出现则返回它（断言失败证据）。"""
+            deadline = time.time() + seconds
+            while True:
+                left = deadline - time.time()
+                if left <= 0:
+                    return None
+                try:
+                    msg = await ws.receive(timeout=left)
+                except (asyncio.TimeoutError, TimeoutError):
+                    return None
+                if msg.type != aiohttp.WSMsgType.TEXT:
+                    continue
+                obj = json.loads(msg.data)
+                if obj.get("type") == "frame":
+                    frames.append(obj)
+                    return obj
+
+        def is_frame(state):
+            return lambda o: o.get("type") == "frame" and o["state"] == state
+
+        # ---------------- 1. 配对 ----------------
         await ws.send_json({"type": "pair", "code": pair_code(), "deviceName": "e2e-sim"})
-        pair_ok = await recv_until(lambda o: o.get("type") == "pair_ok")
-        check("配对成功（pair_ok 含双 token）",
-              bool(pair_ok.get("accessToken")) and bool(pair_ok.get("refreshToken")))
+        pair_ok = await recv_until(lambda o: o.get("type") == "pair_ok", 15)
+        if not check("配对成功（pair_ok 含双 token）",
+                     bool(pair_ok) and bool(pair_ok.get("accessToken"))
+                     and bool(pair_ok.get("refreshToken"))):
+            return
 
-        # 2. resume 帧
-        hello = await recv_until(lambda o: o.get("type") == "hello_ok")
-        check("hello_ok 携带 resume 现场帧", hello.get("resume", {}).get("type") == "frame")
+        # ---------------- 2. resume 帧 ----------------
+        hello = await recv_until(lambda o: o.get("type") == "hello_ok", 15)
+        check("hello_ok 携带 resume 现场帧",
+              bool(hello) and hello.get("resume", {}).get("type") == "frame")
 
-        # 3. PTT + 实时灌入 PCM（100ms/块，1x 速度）
+        # ---------------- 3. PTT + 实时灌入 PCM（100ms/块，1x 速度）----------------
         await ws.send_json({"type": "ptt", "action": "start"})
-        await recv_until(lambda o: o.get("type") == "frame" and o["state"] == "S2", 10)
-        check("PTT 后立即进入 S2 聆听（免节流）", True)
-        t_speech_end = 0.0
+        s2 = await recv_until(is_frame("S2"), 10)
+        check("PTT 后立即进入 S2 聆听（免节流）", s2 is not None,
+              "" if s2 else "10s 内未收到 S2 帧")
+
         chunk = 3200  # 100ms
         for i in range(0, len(pcm), chunk):
             await ws.send_bytes(pcm[i:i + chunk])
@@ -102,67 +185,149 @@ async def run_client() -> None:
         t_speech_end = time.time()
         await ws.send_json({"type": "ptt", "action": "stop"})
 
-        # 4. 等待转写确认帧（S3 带 final 文本）
+        # ---------------- 4. 转写确认帧（S3 带 final 文本）----------------
         s3 = await recv_until(
             lambda o: o.get("type") == "frame" and o["state"] == "S3" and o["containers"]["body"], 30)
-        t_transcript = time.time() - t_speech_end
-        check(f"松手→final 转写上屏 {t_transcript:.1f}s",
-              t_transcript < 8, s3["containers"]["body"][:30])
-        check("转写文本命中关键词", "畅通" in s3["containers"]["body"])
+        if not check("松手→final 转写上屏（<8s）",
+                     s3 is not None and (time.time() - t_speech_end) < 8,
+                     s3["containers"]["body"][:30] if s3 else "30s 内未收到带正文的 S3 帧"):
+            if s3 is None:
+                return
+        check("转写文本命中关键词「畅通」",
+              bool(s3) and "畅通" in s3["containers"]["body"])
 
-        # 5. 思考帧 → 回复帧
-        await recv_until(lambda o: o.get("type") == "frame" and o["state"] == "S4", 15)
-        check("进入 S4 思考（含状态条计秒）", True)
-        s7 = await recv_until(lambda o: o.get("type") == "frame" and o["state"] == "S7", 120)
-        t_reply = time.time() - t_speech_end
-        check(f"收到 agent 最终回复（说完→完成 {t_reply:.1f}s）", True, s7["containers"]["body"][:40])
-        check("回复来自真实工部（含指令回显语义）", "畅通" in s7["containers"]["body"])
+        # ---------------- 5. 思考帧 → 回复帧 ----------------
+        s4 = await recv_until(is_frame("S4"), 15)
+        check("进入 S4 思考（含状态条计秒）", s4 is not None,
+              s4["containers"]["status"] if s4 else "15s 内未收到 S4 帧")
 
-        # 6. 帧约束校验
+        s7 = await recv_until(is_frame("S7"), 120)
+        if not check("收到 agent 最终回复 S7", s7 is not None,
+                     f"说完→完成 {time.time() - t_speech_end:.1f}s" if s7
+                     else "120s 内未收到 S7 帧"):
+            return
+        check("回复含问题回显（agent 确实读到了转写文本）",
+              "畅通" in s7["containers"]["body"] or "畅通" in json.dumps(frames, ensure_ascii=False),
+              s7["containers"]["body"][:40])
+
+        # ---------------- 6. 帧约束校验 ----------------
         seqs = [f["seq"] for f in frames]
-        check("seq 严格单调递增", all(b > a for a, b in zip(seqs, seqs[1:])), f"{len(seqs)} 帧")
-        wide = [ln for f in frames for ln in f["containers"]["body"].split("\n")
-                if sum(2 if ord(c) > 0x2E80 else 1 for c in ln) > 35]
-        check("正文每行 ≤17 汉字预算", not wide, (wide[0] if wide else ""))
-        keys_ok = all(set(f["containers"]) == {"status", "body", "foot"} for f in frames)
-        check("帧 containers 结构恒定", keys_ok)
+        check("seq 严格单调递增", len(seqs) > 1 and all(b > a for a, b in zip(seqs, seqs[1:])),
+              f"{len(seqs)} 帧")
 
-        # 7. 断线重连：重放现场
+        wide = [(ln, line_width(ln)) for f in frames
+                for ln in f["containers"]["body"].split("\n") if line_width(ln) > BUDGET_PX]
+        check(f"正文每行 ≤ {BUDGET_PX}px（固件字形度量）", not wide,
+              f"{wide[0][0]!r} 宽{wide[0][1]}px" if wide else "")
+
+        tall = [(f["seq"], n) for f in frames
+                if (n := len(f["containers"]["body"].split("\n"))) > MAX_LINES]
+        check(f"正文每帧 ≤ {MAX_LINES} 行（216px / 27px 行高）", not tall,
+              f"seq={tall[0][0]} 有 {tall[0][1]} 行" if tall else "")
+
+        # 下发到眼镜的每一个字符都必须真的能被 G2 画出来（字库外字符固件会静默丢弃）
+        bad_glyph = [(f["seq"], k, missing_codepoints(v))
+                     for f in frames for k, v in f["containers"].items()
+                     if missing_codepoints(v)]
+        check("所有下发字符都在 G2 字库内", not bad_glyph,
+              f"seq={bad_glyph[0][0]} {bad_glyph[0][1]} 含 "
+              + " ".join(f"U+{c:04X}({chr(c)})" for c in bad_glyph[0][2]) if bad_glyph else "")
+
+        check("帧 containers 结构恒定",
+              all(set(f["containers"]) == {"status", "body", "foot"} for f in frames))
+
+        # ---------------- 7. 翻页（修 T3：原来只发了 reset，从没测过翻页）----------------
+        # S7 落在末页（_on_reply_text 跟随模式 _page = total-1），因此先 prev 再 next。
+        total = int(s7["containers"]["foot"].split("/")[-1].split()[0]) if "/" in s7["containers"]["foot"] else 1
+        if check("回复分页 >1（翻页可测）", total > 1, f"共 {total} 页"):
+            page_last = s7["containers"]["body"]
+
+            # 页脚形如「‹ 2/3 ›」：箭头只在**那个方向真的还有页**时出现
+            prev_g, next_g = GLYPHS["page_prev"], GLYPHS["page_next"]
+
+            await ws.send_json({"type": "page", "dir": "prev"})
+            p1 = await recv_until(is_frame("S7"), 8)
+            foot1 = p1["containers"]["foot"] if p1 else ""
+            check("翻页 prev：页码递减且正文变化",
+                  p1 is not None and f"{total - 1}/{total}" in foot1
+                  and p1["containers"]["body"] != page_last,
+                  foot1 or "8s 内未收到翻页帧")
+            check("页脚箭头指向可翻方向（在首页则无 ‹）",
+                  p1 is not None and next_g in foot1 and (prev_g in foot1) == (total > 2),
+                  foot1)
+
+            await ws.send_json({"type": "page", "dir": "next"})
+            p2 = await recv_until(is_frame("S7"), 8)
+            foot2 = p2["containers"]["foot"] if p2 else ""
+            check("翻页 next：回到末页且正文还原",
+                  p2 is not None and f"{total}/{total}" in foot2
+                  and p2["containers"]["body"] == page_last,
+                  foot2 or "8s 内未收到翻页帧")
+            check("末页无 › 箭头", p2 is not None and next_g not in foot2 and prev_g in foot2, foot2)
+
+            # 边界：已在末页再 next 应当不产生任何帧（_turn_page 的 new == _page 早返回）
+            await ws.send_json({"type": "page", "dir": "next"})
+            stray = await expect_no_frame(2.0)
+            check("边界：末页再 next 不产生冗余帧", stray is None,
+                  f"意外帧 seq={stray['seq']}" if stray else "")
+
+        # ---------------- 8. 断线重连：重放现场 ----------------
+        last_seq = frames[-1]["seq"]
         await ws.close()
-        ws2 = await http.ws_connect(f"ws://127.0.0.1:{PORT}/ws")
-        await ws2.send_json({"type": "refresh", "refreshToken": pair_ok["refreshToken"]})
-        rmsg = await ws2.receive(timeout=10)
-        robj = json.loads(rmsg.data)
-        check("refreshToken 换发新 access", robj.get("type") == "refresh_ok")
-        await ws2.send_json({"type": "hello", "token": robj["accessToken"]})
-        hmsg = await ws2.receive(timeout=10)
-        hobj = json.loads(hmsg.data)
-        resume = hobj.get("resume", {})
-        check("重连后 1 帧恢复现场（resume = 断前画面）",
-              resume.get("state") in ("S7", "S0") and resume.get("seq", 0) >= seqs[-1])
+        ws = await http.ws_connect(f"ws://127.0.0.1:{PORT}/ws")
+        await ws.send_json({"type": "refresh", "refreshToken": pair_ok["refreshToken"]})
+        robj = await recv_until(lambda o: o.get("type") in ("refresh_ok", "error"), 10)
+        if not check("refreshToken 换发新 access", bool(robj) and robj.get("type") == "refresh_ok",
+                     "" if robj else "10s 内无应答"):
+            return
 
-        # 8. 翻页与清屏
-        await ws2.send_json({"type": "reset"})
-        frames2 = []
-        deadline = time.time() + 5
-        while time.time() < deadline:
-            try:
-                m = await ws2.receive(timeout=deadline - time.time())
-            except asyncio.TimeoutError:
-                break
-            if m.type == aiohttp.WSMsgType.TEXT:
-                o = json.loads(m.data)
-                if o.get("type") == "frame":
-                    frames2.append(o)
-                    if o["state"] == "S0":
-                        break
-        check("reset → 回 S0 待机", any(f["state"] == "S0" for f in frames2))
-        await ws2.close()
+        await ws.send_json({"type": "hello", "token": robj["accessToken"]})
+        hobj = await recv_until(lambda o: o.get("type") in ("hello_ok", "error"), 10)
+        resume = (hobj or {}).get("resume", {})
+        check("重连后 1 帧恢复现场（resume = 断前画面）",
+              bool(hobj) and resume.get("state") in ("S7", "S0") and resume.get("seq", 0) >= last_seq,
+              f"state={resume.get('state')} seq={resume.get('seq')} (断前 {last_seq})")
+
+        # ---------------- 9. 清屏 ----------------
+        await ws.send_json({"type": "reset"})
+        s0 = await recv_until(is_frame("S0"), 8)
+        check("reset → 回 S0 待机", s0 is not None,
+              s0["containers"]["status"] if s0 else "8s 内未回 S0")
+        await ws.close()
+
+
+def _spawn_agent_fixture(state_dir: str) -> tuple[subprocess.Popen | None, str, str]:
+    """默认拉起 demo/fake_openclaw.py 作为 agent 测试夹具；返回 (进程, url, 鉴权配置路径)。"""
+    ext_url = os.environ.get("LENS_E2E_AGENT_URL")
+    ext_cfg = os.environ.get("LENS_E2E_AGENT_CONFIG")
+    if ext_url and ext_cfg:
+        print(f"agent: 外部真实 agent {ext_url}")
+        return None, ext_url, str(Path(ext_cfg).expanduser())
+
+    port = _free_port()
+    auth = Path(state_dir) / "agent-auth.json"
+    auth.write_text(json.dumps({"gateway": {"auth": {"token": "e2e-fixture-token"}}}))
+    log_file = open(Path(state_dir) / "agent.log", "w")
+    proc = subprocess.Popen(
+        [sys.executable, str(AGENT_FIXTURE), "--port", str(port), "--think", "1.5"],
+        stdout=log_file, stderr=subprocess.STDOUT, cwd=str(REPO))
+    if not wait_port(port):
+        proc.kill()
+        raise TimeoutError(f"agent 夹具未在 {port} 就绪，见 {state_dir}/agent.log")
+    print(f"agent: 测试夹具 demo/fake_openclaw.py @ ws://127.0.0.1:{port}")
+    return proc, f"ws://127.0.0.1:{port}", str(auth)
 
 
 async def main() -> None:
     state_dir = tempfile.mkdtemp(prefix="lens-e2e-")
-    (Path(state_dir) / "config.json").write_text(json.dumps({"port": PORT, "host": "127.0.0.1"}))
+    agent_proc, agent_url, agent_cfg = _spawn_agent_fixture(state_dir)
+
+    # 修 T1：把 agent 端点写进配置，端到端不再依赖仓库外的服务。
+    (Path(state_dir) / "config.json").write_text(json.dumps({
+        "port": PORT,
+        "host": "127.0.0.1",
+        "openclaw": {"url": agent_url, "config_path": agent_cfg},
+    }))
     env = {**os.environ, "LENS_STATE_DIR": state_dir, "PYTHONPATH": str(ROOT)}
     log_file = open(Path(state_dir) / "server.log", "w")
     print(f"服务端日志: {state_dir}/server.log")
@@ -175,16 +340,22 @@ async def main() -> None:
         print("开始端到端闭环：")
         await run_client()
     finally:
-        proc.send_signal(signal.SIGTERM)
-        try:
-            proc.wait(timeout=8)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait(timeout=5)
+        for p in (proc, agent_proc):
+            if p is None:
+                continue
+            p.send_signal(signal.SIGTERM)
+            try:
+                p.wait(timeout=8)
+            except subprocess.TimeoutExpired:
+                p.kill()
+                p.wait(timeout=5)
+
     failed = [n for n, ok in CHECKS if not ok]
     print(f"\n=== e2e 结果：{len(CHECKS) - len(failed)}/{len(CHECKS)} 通过 ===")
     if failed:
-        print("失败项：", failed)
+        print("失败项：")
+        for n in failed:
+            print(f"  - {n}")
         sys.exit(1)
 
 

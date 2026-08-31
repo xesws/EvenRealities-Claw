@@ -32,9 +32,9 @@
 
 ### 1.1 官方 SDK（G2）
 - Even Hub（hub.evenrealities.com）2026-04-03 上线，**只支持 G2**（G1 全站零提及）。
-- `@evenrealities/even_hub_sdk`（npm，MIT，v0.0.10 / 2026-04-10）+ evenhub-cli + 模拟器 + 4 个官方模板（minimal / **asr** / image / text-heavy —— asr 模板可直接当起点）。
+- `@evenrealities/even_hub_sdk`（npm，MIT，本仓库锁 ^0.0.14；包内无发布日期字段，不要引用未经核实的日期）+ evenhub-cli + 官方模拟器 + `@evenrealities/pretext` 字形度量库 + 4 个官方模板（minimal / **asr** / image / text-heavy —— asr 模板可直接当起点）。
 - 插件 = WebView 里的 web app（Android Chromium / iOS WKWebView），宿主是官方 Flutter App；插件可自由连任意服务器。目前只有 background-layer 插件；dashboard widget、AI skill 在路线图上。
-- 画布 576×288/眼，4-bit 16 级绿灰阶，左上原点；每页 1-12 个 container，文本 container ≤8，单 container ≤1000 字（`textContainerUpgrade` 到 2000）。
+- 画布 576×288/眼，4-bit 16 级绿灰阶，左上原点（**出处是官方文档站 `/docs/build/display`，不是 SDK**——SDK 里 576/288 只作为字段取值范围出现，运行时不做任何尺寸校验）；每页 1-12 个 container，文本 container ≤8，**单 container 内容上限是 UTF-8 999 字节**（不是 1000 字符，已在官方模拟器上实测，见 [HARDWARE-SPEC.md](./HARDWARE-SPEC.md) §2.1）。
 - 图片 ≤288×144、每页 ≤4 张、**必须串行队列发送**、官方明确不鼓励频繁发图 → UI 以文本为主。
 - mic：`audioControl(isOpen)`，前置条件 `createStartUpPageContainer` 成功；PCM 经 `onEvenHubEvent` 的 `audioEvent.audioPcm`（Uint8Array）。硬件 4-mic 阵列、16kHz PCM 单流。
 - **无扬声器、无摄像头** → 声音回放走手机；R1 戒指可做输入。
@@ -134,7 +134,7 @@
 ### 3.3 HUD 帧编排器（渲染协议核心）
 - 输出**幂等整屏帧**：`{seq 单调递增, container分区文本, 灰阶标注}`。客户端丢弃旧序号帧；发送队列只保留最新一帧（coalescing，R3）。
 - 折行器：中文标点禁则（句末标点不上行首、拉丁词不硬切，实际 16-17 字/行浮动）；**下发前强制剥离 markdown**，表格降级为「共 n 行，说『继续』在手机看」，URL 只显域名。
-- 分页器：85 字/页（G2）/ 92 字/屏（G1），新页携带上页末句尾 ≤10 字暗灰锚点；**服务器端积页**：token 超速时堆成「+N 页」，每页最小驻留 4s（G1 6s）—— 由人按节奏翻页，不是屏幕追 token。
+- 分页器：**8 行/页 ≈ 224 汉字（G2，216px ÷ 27px 行高，按真实像素宽度折行）** / 92 字/屏（G1），新页携带上页末句尾 ≤10 字暗灰锚点；**服务器端积页**：token 超速时堆成「+N 页」，每页最小驻留 4s（G1 6s）—— 由人按节奏翻页，不是屏幕追 token。
 - 节流：**状态切换帧免节流**（砍掉感知延迟自伤，R9），流式正文帧 cap 2Hz（G1 1Hz）；mic 打开期间主动压到 ≤1Hz（音频上行抢带宽）。
 - 自适应降频：实测帧发送耗时 > 帧间隔 → 自动减半频率并显「⌁慢」微标（唯一闭环的拥塞控制）。
 - 断线重放：服务器持久化"当前帧"，重连后 1 帧恢复现场；agent run 断线期间继续跑。
@@ -154,23 +154,30 @@
 
 ### 4.1 设计铁律（全局验收标准）
 1. **0.5 秒瞥视契约**：任何状态下，读懂状态条最左 3 字符（agent 单字徽记 + 状态符号）即知系统在干什么。层级用符号冗余编码（▸▌·⚠⧗），强日光灰阶塌缩成 2 档时依然可读。
-2. **正文只放"此刻唯一值得读的那段话"**：32px 大字、17 汉字/行、5 行、85 字/页封顶；多了翻页，绝不缩字号。
+2. **正文只放"此刻唯一值得读的那段话"**：8 行/页、每行约 28 汉字（576px ÷ 20px CJK advance）、≈224 汉字/页封顶；多了翻页。**注意 G2 根本没有字号可缩**——版式的唯一自由度是容器几何与 `textColor`。
 3. **永不滚动、永不清屏重绘**：只整页翻进 + 整帧替换；动效只允许灰阶呼吸（L6↔L12 亮度脉动），物理上无闪烁。
 4. **信息删减是默认值**：用户说一声「详细」即可换取完整展开（极简主义的官方出口）。
 
 ### 4.2 Layout
 
-**G2（576×288，4 个 container，16 级灰阶用 4 档）**
+**G2（576×288，3 个 text container，行高固定 27px）**
 
-| 区域 | 像素 | 字号 | 容量 | 内容 |
+版式的机器可读真源是 [`protocol/hud-contract.json`](../protocol/hud-contract.json)，
+网关（Python）与插件（TypeScript）读同一份文件，不可能漂移。
+
+| 区域 | 像素 | 容量 | textColor | 内容 |
 |---|---|---|---|---|
-| 状态条 | y 0-31 (32px) | 24px | ≤20 字 | 最左：徽记 1 字 + 状态符 1 字；右端：计秒/倒计时 |
-| 分隔线 | y=32, 1px | — | — | L3 装订线 |
-| 正文 | y 32-251 (220px) | 32px，行高 44px | 17 字×5 行 = 85 字 | 稳定区 + 活跃区双 container（高频更新只触活跃区，重绘面积最小化） |
-| 页脚 | y 252-287 (36px) | 24px | 1 行 | 默认全空；页码「2/3 ›」/ P3 告警。**页脚有字 = 有事可做** |
+| 状态条 | y 0-35 (36px) | 1 行 | 4（最亮） | 最左：状态字形 1 字；右端：计秒/倒计时 |
+| 正文 | y 36-251 (216px) | **8 行 ≈ 224 汉字**（216 / 27） | 3 | 服务器已分页，整屏幂等替换 |
+| 页脚 | y 252-287 (36px) | 1 行 | 2 | 默认全空；页码「‹ 2/3 ›」。**页脚有字 = 有事可做**。`isEventCapture=1` 挂在这里 |
 
-灰阶 4 档：L15 唯一焦点（当前页正文/追加句/错误词）；L10 状态条/未稳定尾段；L6 锚点/页码/提示/陈旧内容；L3 分隔线/待机点。呼吸动画专用 L6↔L12。
-强光降级模式（手机光传感器触发）：压缩为 L15/L9 两档，L3 信息直接隐藏。
+三者相加正好铺满 288，已在官方模拟器上验证不触发 `oversize`（[HARDWARE-SPEC.md](./HARDWARE-SPEC.md) §2.2）。
+
+**G2 上不存在的三样东西**（早期设计稿写过，物理上做不到）：
+- **字号**：`TextContainerProperty` 里根本没有字号字段，全屏单一字号。
+- **对齐**：只能左对齐、顶对齐；"居中"只能靠补空格。
+- **16 级文本灰阶**：文本亮度只有 `textColor` **0~4 五级**（`borderColor` 才是 0~15，两套刻度）。
+  因此原稿的 L15/L12/L10/L6/L3 四档层级与 L6↔L12 呼吸动画都不成立，改用上表的 4/3/2 三档。
 
 **G1 降级映射（640×200，5 行 × 23 字）**
 - 行 1 = 微状态行（状态条+页脚合并）：`[工] ◉ 聆听 …… 0:07`，徽记带方括号补偿无灰阶。
@@ -184,12 +191,12 @@
 |---|---|---|---|
 | S0 待机 | 开机/读完超时/清屏 | 近黑 + 屏中心一个 L3 灰点（点消失=链路死），0 文字 | 按键→S1；P1 告警→SA；断线→S9 |
 | S1 唤醒 | 按键，下发开 mic | 状态条「工 ◉」单帧 | mic ack <300ms→S2；超时 1s→E1 |
-| S2 聆听 | PCM 进入 ASR | 「工 ◉ 聆听 0:07」+ partial 大字（稳定 L15 / 尾段 L10+▌），最近 85 字窗 | VAD 800ms 静音→S3；单击=取消；G1 t≥28s→S2r |
+| S2 聆听 | PCM 进入 ASR | 「● 聆听 0:07」+ partial（尾段带 `▌` 光标），最近一屏窗 | VAD 800ms 静音→S3；单击=取消；G1 t≥28s→S2r |
 | S2r 续流缝隙(G1) | t=28s 预重发 0x0E | 收音点「◉·」微标，基本无感；ASR 2s 重叠缓冲拼缝 | 新流 ack→S2；缝隙>500ms 且期间有语音→S3 加 ⧗ 警示 |
 | S3 转写确认 | ASR final | 「→ 工部 ●●○」倒计时 1.5s（低置信 3s+「请核对文字」）+ final 全文 | 归零→发送→S4；「重说」回 S2；「等等」暂停；R1 滚动换 agent |
 | S4 思考中 | runId 返回，无 delta | 「工 ◔ 思考 6s」呼吸点 1Hz + 问题首行回显 L6 | 首 delta→S6；tool 事件→S5；>30s→E7 慢响应子态；「停」→abort |
 | S5 工具执行 | tool 事件 | 「工 ⚙ 工具 14s」+ 工具中文名（白名单映射）+ 摘要参数 ≤12 字（只白名单搜索词/文件名） | 工具结束→S4/S6 |
-| S6 流式回复 | delta 持续到达 | 「工 ▸ 回答」+ 句边界成块填充，满 85 字整页翻进带锚点，页脚「‹n」 | final 且≤85 字→显示 15s 渐隐；>85 字→S7；「停」→已收文本保留进 S7 |
+| S6 流式回复 | delta 持续到达 | 「▶ 回答」+ 句边界成块填充，满页整页翻进带锚点，页脚「‹ n/m ›」 | final 且单页装得下→显示 15s 渐隐；多页→S7；「停」→已收文本保留进 S7 |
 | S7 翻页阅读 | final 多页 / 流中回翻 | 「工 ✓ 完成」+ 页码「2/3 ›」；「读」=手机 TTS | 末页 10s 无操作→S0 |
 | S8 错误 | E1-E8 | ≤2 行：错误词 ≤8 字 + 动作提示 ≤10 字。不显示错误码 | 自动恢复成功→原状态；重试耗尽→静态等按键 |
 | S9 断线重连 | 心跳丢 2 次 | 「⟲ 重连 n」+ 断前内容压暗 L6 | 退避 5 次失败→「服务器失联·长按重试」 |
@@ -315,6 +322,6 @@ G1 · S6 流式回复（5 行 × 23 字，无灰阶全符号）
 
 ## 8. 主要引用
 
-官方：hub.evenrealities.com（开发者门户/docs）、npm `@evenrealities/even_hub_sdk`（v0.0.10）、github.com/even-realities/EvenDemoApp（G1 协议）、github.com/even-realities/evenhub-templates、evenrealities.com/g1（硬件规格）。
+官方：hub.evenrealities.com（开发者门户/docs）、npm `@evenrealities/even_hub_sdk`（本仓库锁 ^0.0.14）、`@evenrealities/pretext`（字形度量）、`@evenrealities/evenhub-simulator`、github.com/even-realities/EvenDemoApp（G1 协议）、github.com/even-realities/evenhub-templates、evenrealities.com/g1（硬件规格）。
 社区：gadgetbridge.org（G1 第三方直连验证）、github.com/emingenc/even_glasses、github.com/Mentra-Community/MentraOS、github.com/nickustinov/even-g2-notes、github.com/i-soxi/even-g2-protocol、AGiXT G1 BLE 协议笔记。
 内部实测（红队）：服务器资源约束、网关凭证形态、历史告警风暴事故记录。

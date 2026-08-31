@@ -1,0 +1,65 @@
+{
+  "_comment": "G2 HUD 契约：画布几何、容器版式、语义字形表。网关（Python）与插件（TypeScript）读同一份文件，版式与字形不可能漂移。规格出处见 docs/HARDWARE-SPEC.md。",
+  "version": 2,
+
+  "canvas": {
+    "width": 576,
+    "height": 288,
+    "_source": "官方文档站 /docs/build/display：Each eye displays a 576 x 288 pixel canvas. 左上原点，X 向右 Y 向下。物理面板另有 640x350，不是可寻址画布。"
+  },
+
+  "lineHeight": 27,
+  "_lineHeight_source": "官方 text-heavy 模板 paginate.ts：const LINE_HEIGHT = 27（Line height is a fixed 27px in EvenHub's LVGL build）。同一数字也内嵌在 @evenrealities/pretext 的 line_height 字段，由 extract_metrics.mjs 校验。",
+
+  "containers": [
+    { "id": 1, "name": "status", "x": 0, "y": 0, "w": 576, "h": 36, "lines": 1, "textColor": 4 },
+    { "id": 2, "name": "body", "x": 0, "y": 36, "w": 576, "h": 216, "lines": 8, "textColor": 3 },
+    { "id": 3, "name": "foot", "x": 0, "y": 252, "w": 576, "h": 36, "lines": 1, "textColor": 2 }
+  ],
+  "_containers_note": "高度全部取 27 的整数倍（36=1行含余量 / 216=8行 / 36=1行），三者相加正好铺满 288。textColor 是 SDK 0.0.14+ 的五级亮度（0~4，省略即默认 4）——这是 G2 上唯一真实存在的视觉分层手段，没有字号也没有对齐控制。整屏铺满 576x288 已在官方模拟器上实测通过（createStartUpPageContainer 返回 0，不触发 oversize），见 docs/HARDWARE-SPEC.md §2.2。",
+
+  "eventCaptureContainer": "foot",
+  "_eventCapture_note": "一个页面必须且仅能有一个容器 isEventCapture=1。挂在 foot 而非 body 是有意的：服务器已经做完分页，body 不应由固件滚动（固件只对 isEventCapture=1 的容器做溢出滚动）。",
+
+  "glyphProfiles": {
+    "symbol": {
+      "idle": "·", "listening": "●", "transcribing": "→", "thinking": "◐",
+      "tool": "◆", "answering": "▶", "done": "√", "error": "×",
+      "warning": "！", "disconnected": "！", "paused": "‖", "stopped": "■",
+      "cursor": "▌", "page_prev": "‹", "page_next": "›", "ellipsis": "…", "bullet": "•"
+    },
+    "cjk": {
+      "idle": "待", "listening": "听", "transcribing": "转", "thinking": "思",
+      "tool": "具", "answering": "答", "done": "完", "error": "误",
+      "warning": "注", "disconnected": "断", "paused": "暂", "stopped": "停",
+      "cursor": "▌", "page_prev": "‹", "page_next": "›", "ellipsis": "…", "bullet": "•"
+    },
+    "ascii": {
+      "idle": ".", "listening": "*", "transcribing": ">", "thinking": "~",
+      "tool": "+", "answering": ">", "done": "v", "error": "x",
+      "warning": "!", "disconnected": "!", "paused": "=", "stopped": "#",
+      "cursor": "_", "page_prev": "<", "page_next": ">", "ellipsis": "...", "bullet": "-"
+    }
+  },
+
+  "_replaces": {
+    "_note": "symbol 档里这些字形是替代品。被替代的原字形经三重确认不在 G2 字库：官方字形表、@evenrealities/pretext 的 getAdvW===0、以及官方模拟器截图（整幅零个不透明像素）。判定明细与截图证据见 docs/GLYPH-TABLE.md。两端都有测试逐个校验字形在库。",
+    "listening": "◉ U+25C9",
+    "thinking": "◔ U+25D4",
+    "tool": "⚙ U+2699",
+    "answering": "▸ U+25B8",
+    "done": "✓ U+2713（Dingbats 整区缺失）",
+    "error": "✕ U+2715（Dingbats 整区缺失）",
+    "warning": "⚠ U+26A0",
+    "disconnected": "⛓ U+26D3",
+    "paused": "⏸ U+23F8（Misc Technical 整区缺失）",
+    "stopped": "⏹ U+23F9（Misc Technical 整区缺失）",
+    "bullet": "· U+00B7（在库，但它是中文间隔号、属行首禁排字符，不适合当项目符号）"
+  },
+
+  "hudText": {
+    "_note": "插件自己写死的、会直接下发到眼镜的文案。集中在这里是为了能被字形测试统一扫描。{glyph} 会被替换成对应档位的字形。",
+    "booting": "{disconnected} 等待连接…",
+    "linkLost": "{disconnected} 连接丢失·重连中"
+  }
+}

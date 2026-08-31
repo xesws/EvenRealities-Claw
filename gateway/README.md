@@ -10,7 +10,7 @@
 | `session.py` | 设备会话状态机 S0-S8、帧节流（状态帧免节流/内容帧 2Hz coalescing）、跨重连现场恢复 |
 | `asr.py` | 双模型管线：tiny partial（显示用）+ base final（路由用）、local-agreement 稳定前缀、全局解码串行锁 |
 | `openclaw.py` | OpenClaw 网关 WS 客户端：chat.send 流式事件、abort、runId 僵尸标记 |
-| `textkit.py` | markdown 剥离、CJK 折行（标点禁则）、85 字分页 + 锚点 |
+| `formatting/` | 排版引擎：G2 字形度量复刻 → 像素盒折行（CJK 标点禁则）→ 8 行/页分页 + 锚点、markdown 剥离、文本净化、字形在库校验 |
 | `auth.py` | 配对码 → 设备注册 → accessToken(JWT 15min) + refreshToken（只存哈希），单设备吊销 |
 | `config.py` | 配置（状态目录 `~/.lens-gateway/`，不入库） |
 

@@ -3,6 +3,7 @@
  * 两个屏：配对屏（网关地址 + 6 位配对码）/ 主屏（按住说话、状态行、眼镜画面预览、
  * ●REC、打断/清屏、设置、眼镜连接状态+电量）。
  */
+import { CANVAS, LAYOUT, LINE_HEIGHT } from './hud';
 import './style.css';
 import type { FrameContainers, FrameMessage } from './types';
 
@@ -146,6 +147,7 @@ export class LensUi {
       repairBtn: pick('repairBtn'),
     };
 
+    this.applyHudGeometry();
     this.bindEvents();
     this.fitPreview();
     window.addEventListener('resize', () => this.fitPreview());
@@ -213,18 +215,55 @@ export class LensUi {
     e.repairBtn.addEventListener('click', () => this.cb.onRepair());
   }
 
+  /**
+   * 同步"按住说话"按钮的外观（**只改 UI，不触发任何回调**）。
+   * 供外部取消路径复用：手势退出、前台交互层关闭、开麦失败。
+   * 置 false 后手指真正抬起时 `pointerup` 会因 `pttPressed` 已为 false 而空转，
+   * 不会重复发一次 ptt stop。
+   */
+  setPttActive(active: boolean): void {
+    this.pttPressed = active;
+    const ptt = this.els.pttBtn;
+    ptt.classList.toggle('active', active);
+    ptt.textContent = active ? '松开发送 · 上滑取消' : '按住说话';
+  }
+
   private endPtt(): void {
-    this.pttPressed = false;
-    this.els.pttBtn.classList.remove('active');
-    this.els.pttBtn.textContent = '按住说话';
+    this.setPttActive(false);
+  }
+
+  /**
+   * 把手机预览的三个区**按 HUD 契约**摆好，而不是在 CSS 里写死一套。
+   * 契约（`protocol/hud-contract.json`）同时被网关的排版引擎和插件的建页逻辑读取，
+   * 于是"预览里看到的版式"与"眼镜上真实的版式"不可能漂移。
+   * 亮度用 opacity 近似 `textColor` 0~4 —— 那是 G2 上唯一真实存在的视觉分层手段。
+   */
+  private applyHudGeometry(): void {
+    this.els.preview.style.width = `${CANVAS.width}px`;
+    this.els.preview.style.height = `${CANVAS.height}px`;
+    const slot: Record<string, HTMLElement> = {
+      status: this.els.pvStatus,
+      body: this.els.pvBody,
+      foot: this.els.pvFoot,
+    };
+    for (const c of LAYOUT) {
+      const el = slot[c.name];
+      if (!el) continue;
+      el.style.top = `${c.y}px`;
+      el.style.left = `${c.x}px`;
+      el.style.width = `${c.w}px`;
+      el.style.height = `${c.h}px`;
+      el.style.lineHeight = `${LINE_HEIGHT}px`;
+      el.style.opacity = String(0.35 + 0.1625 * (c.textColor ?? 4));
+    }
   }
 
   private fitPreview(): void {
     const w = this.els.previewWrap.clientWidth;
     if (w <= 0) return;
-    const scale = Math.min(1, w / 576);
+    const scale = Math.min(1, w / CANVAS.width);
     this.els.preview.style.transform = `scale(${scale})`;
-    this.els.previewWrap.style.height = `${Math.round(288 * scale)}px`;
+    this.els.previewWrap.style.height = `${Math.round(CANVAS.height * scale)}px`;
   }
 
   // ---------- 屏切换 ----------

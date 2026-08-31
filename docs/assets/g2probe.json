@@ -1,0 +1,465 @@
+[
+  {
+    "index": 0,
+    "total": 8,
+    "id": "layout",
+    "label": "仓库真实 LAYOUT（铺满 576×288，官方示例最大只到 420×270）",
+    "api": "createStartUpPageContainer",
+    "result": 0,
+    "error": null,
+    "meta": {},
+    "containers": [
+      {
+        "name": "status",
+        "box": "0,0 576x36",
+        "bytes": 15,
+        "chars": 9
+      },
+      {
+        "name": "body",
+        "box": "0,36 576x216",
+        "bytes": 193,
+        "chars": 74
+      },
+      {
+        "name": "foot",
+        "box": "0,252 576x36",
+        "bytes": 11,
+        "chars": 7
+      }
+    ],
+    "file": "docs/assets/g2probe-00-layout.png",
+    "notes": [
+      "总墨迹像素 7722，有墨行 7 行（行号 0,1,2,3,4,9,10）"
+    ]
+  },
+  {
+    "index": 1,
+    "total": 8,
+    "id": "glyphs-missing",
+    "label": "官方字形表判为缺失的 10 个字形，每行一个",
+    "api": "rebuildPageContainer",
+    "result": true,
+    "error": null,
+    "meta": {
+      "glyphs": [
+        "◉",
+        "◔",
+        "▸",
+        "⚙",
+        "⚠",
+        "⛓",
+        "✓",
+        "✕",
+        "⏸",
+        "⏹"
+      ]
+    },
+    "containers": [
+      {
+        "name": "probe",
+        "box": "0,0 576x288",
+        "bytes": 39,
+        "chars": 19
+      }
+    ],
+    "file": "docs/assets/g2probe-01-glyphs-missing.png",
+    "verdict": [
+      {
+        "glyph": "◉",
+        "cp": "U+25C9",
+        "ink": 0,
+        "drawn": false,
+        "width": 0
+      },
+      {
+        "glyph": "◔",
+        "cp": "U+25D4",
+        "ink": 0,
+        "drawn": false,
+        "width": 0
+      },
+      {
+        "glyph": "▸",
+        "cp": "U+25B8",
+        "ink": 0,
+        "drawn": false,
+        "width": 0
+      },
+      {
+        "glyph": "⚙",
+        "cp": "U+2699",
+        "ink": 0,
+        "drawn": false,
+        "width": 0
+      },
+      {
+        "glyph": "⚠",
+        "cp": "U+26A0",
+        "ink": 0,
+        "drawn": false,
+        "width": 0
+      },
+      {
+        "glyph": "⛓",
+        "cp": "U+26D3",
+        "ink": 0,
+        "drawn": false,
+        "width": 0
+      },
+      {
+        "glyph": "✓",
+        "cp": "U+2713",
+        "ink": 0,
+        "drawn": false,
+        "width": 0
+      },
+      {
+        "glyph": "✕",
+        "cp": "U+2715",
+        "ink": 0,
+        "drawn": false,
+        "width": 0
+      },
+      {
+        "glyph": "⏸",
+        "cp": "U+23F8",
+        "ink": 0,
+        "drawn": false,
+        "width": 0
+      },
+      {
+        "glyph": "⏹",
+        "cp": "U+23F9",
+        "ink": 0,
+        "drawn": false,
+        "width": 0
+      }
+    ],
+    "notes": []
+  },
+  {
+    "index": 2,
+    "total": 8,
+    "id": "glyphs-substitutes-1",
+    "label": "现役 symbol 档字形 + 三个存疑字形，每行一个（1/2）",
+    "api": "rebuildPageContainer",
+    "result": true,
+    "error": null,
+    "meta": {
+      "glyphs": [
+        "·",
+        "●",
+        "→",
+        "◐",
+        "◆",
+        "▶",
+        "√",
+        "×",
+        "！",
+        "‖"
+      ]
+    },
+    "containers": [
+      {
+        "name": "probe",
+        "box": "0,0 576x288",
+        "bytes": 37,
+        "chars": 19
+      }
+    ],
+    "file": "docs/assets/g2probe-02-glyphs-substitutes-1.png",
+    "verdict": [
+      {
+        "glyph": "·",
+        "cp": "U+00B7",
+        "ink": 4,
+        "drawn": true,
+        "width": 2
+      },
+      {
+        "glyph": "●",
+        "cp": "U+25CF",
+        "ink": 272,
+        "drawn": true,
+        "width": 18
+      },
+      {
+        "glyph": "→",
+        "cp": "U+2192",
+        "ink": 23,
+        "drawn": true,
+        "width": 14
+      },
+      {
+        "glyph": "◐",
+        "cp": "U+25D0",
+        "ink": 169,
+        "drawn": true,
+        "width": 18
+      },
+      {
+        "glyph": "◆",
+        "cp": "U+25C6",
+        "ink": 200,
+        "drawn": true,
+        "width": 20
+      },
+      {
+        "glyph": "▶",
+        "cp": "U+25B6",
+        "ink": 175,
+        "drawn": true,
+        "width": 17
+      },
+      {
+        "glyph": "√",
+        "cp": "U+221A",
+        "ink": 22,
+        "drawn": true,
+        "width": 10
+      },
+      {
+        "glyph": "×",
+        "cp": "U+00D7",
+        "ink": 13,
+        "drawn": true,
+        "width": 7
+      },
+      {
+        "glyph": "！",
+        "cp": "U+FF01",
+        "ink": 26,
+        "drawn": true,
+        "width": 2
+      },
+      {
+        "glyph": "‖",
+        "cp": "U+2016",
+        "ink": 42,
+        "drawn": true,
+        "width": 4
+      }
+    ],
+    "notes": []
+  },
+  {
+    "index": 3,
+    "total": 8,
+    "id": "glyphs-substitutes-2",
+    "label": "现役 symbol 档字形 + 三个存疑字形，每行一个（2/2）",
+    "api": "rebuildPageContainer",
+    "result": true,
+    "error": null,
+    "meta": {
+      "glyphs": [
+        "■",
+        "▌",
+        "‹",
+        "›",
+        "…",
+        "•"
+      ]
+    },
+    "containers": [
+      {
+        "name": "probe",
+        "box": "0,0 576x288",
+        "bytes": 23,
+        "chars": 11
+      }
+    ],
+    "file": "docs/assets/g2probe-03-glyphs-substitutes-2.png",
+    "verdict": [
+      {
+        "glyph": "■",
+        "cp": "U+25A0",
+        "ink": 272,
+        "drawn": true,
+        "width": 16
+      },
+      {
+        "glyph": "▌",
+        "cp": "U+258C",
+        "ink": 210,
+        "drawn": true,
+        "width": 10
+      },
+      {
+        "glyph": "‹",
+        "cp": "U+2039",
+        "ink": 9,
+        "drawn": true,
+        "width": 5
+      },
+      {
+        "glyph": "›",
+        "cp": "U+203A",
+        "ink": 9,
+        "drawn": true,
+        "width": 5
+      },
+      {
+        "glyph": "…",
+        "cp": "U+2026",
+        "ink": 6,
+        "drawn": true,
+        "width": 7
+      },
+      {
+        "glyph": "•",
+        "cp": "U+2022",
+        "ink": 24,
+        "drawn": true,
+        "width": 6
+      }
+    ],
+    "notes": []
+  },
+  {
+    "index": 4,
+    "total": 8,
+    "id": "ruler",
+    "label": "行高与每行容量标尺：十行 × 每行 30 个汉字（超出 576px 的部分应被折走）",
+    "api": "rebuildPageContainer",
+    "result": true,
+    "error": null,
+    "meta": {
+      "rows": 10
+    },
+    "containers": [
+      {
+        "name": "probe",
+        "box": "0,0 576x288",
+        "bytes": 889,
+        "chars": 309
+      }
+    ],
+    "file": "docs/assets/g2probe-04-ruler.png",
+    "rows": [
+      {
+        "row": 0,
+        "rightmostInk": 570
+      },
+      {
+        "row": 1,
+        "rightmostInk": 569
+      },
+      {
+        "row": 2,
+        "rightmostInk": 569
+      },
+      {
+        "row": 3,
+        "rightmostInk": 569
+      },
+      {
+        "row": 4,
+        "rightmostInk": 570
+      },
+      {
+        "row": 5,
+        "rightmostInk": 569
+      },
+      {
+        "row": 6,
+        "rightmostInk": 570
+      },
+      {
+        "row": 7,
+        "rightmostInk": 18
+      },
+      {
+        "row": 8,
+        "rightmostInk": 571
+      },
+      {
+        "row": 9,
+        "rightmostInk": 18
+      },
+      {
+        "row": 10,
+        "rightmostInk": 569
+      }
+    ],
+    "notes": [
+      "有墨的行：0,1,2,3,4,5,6,7,8,9,10（共 11 行）",
+      "最右墨迹 x：570,569,569,569,570,569,570,18,571,18,569"
+    ]
+  },
+  {
+    "index": 5,
+    "total": 8,
+    "id": "bytes-999",
+    "label": "内容 999 字节（333 汉字），刚好卡在模拟器 v0.7.1 的字节上限",
+    "api": "rebuildPageContainer",
+    "result": true,
+    "error": null,
+    "meta": {
+      "bytes": 999,
+      "chars": 333
+    },
+    "containers": [
+      {
+        "name": "probe",
+        "box": "0,0 576x288",
+        "bytes": 999,
+        "chars": 333
+      }
+    ],
+    "file": "docs/assets/g2probe-05-bytes-999.png",
+    "notes": [
+      "总墨迹像素 28980，有墨行 11 行（行号 0,1,2,3,4,5,6,7,8,9,10）"
+    ]
+  },
+  {
+    "index": 6,
+    "total": 8,
+    "id": "bytes-1002",
+    "label": "内容 1002 字节（334 汉字），超出字节上限但远低于 1000 字符",
+    "api": "rebuildPageContainer",
+    "result": false,
+    "error": null,
+    "meta": {
+      "bytes": 1002,
+      "chars": 334
+    },
+    "containers": [
+      {
+        "name": "probe",
+        "box": "0,0 576x288",
+        "bytes": 1002,
+        "chars": 334
+      }
+    ],
+    "file": "docs/assets/g2probe-06-bytes-1002.png",
+    "notes": [
+      "总墨迹像素 28980，有墨行 11 行（行号 0,1,2,3,4,5,6,7,8,9,10）"
+    ]
+  },
+  {
+    "index": 7,
+    "total": 8,
+    "id": "chars-1000",
+    "label": "内容 1000 个 ASCII 字符（= 1000 字节），卡在字符口径上限",
+    "api": "rebuildPageContainer",
+    "result": false,
+    "error": null,
+    "meta": {
+      "bytes": 1000,
+      "chars": 1000
+    },
+    "containers": [
+      {
+        "name": "probe",
+        "box": "0,0 576x288",
+        "bytes": 1000,
+        "chars": 1000
+      }
+    ],
+    "file": "docs/assets/g2probe-07-chars-1000.png",
+    "notes": [
+      "总墨迹像素 28980，有墨行 11 行（行号 0,1,2,3,4,5,6,7,8,9,10）"
+    ]
+  }
+]

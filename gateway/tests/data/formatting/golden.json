@@ -1,0 +1,581 @@
+{
+ "576": {
+  "cjk_short": [
+   [
+    "今天晴，二十六度。"
+   ]
+  ],
+  "cjk_long": [
+   [
+    "三段式：眼镜、手机、服务器。眼镜只有麦克风和一块屏，它是",
+    "一块哑屏，不跑任何业务逻辑。手机上的插件是个转发器，把语",
+    "音往上送、把画面往下发，外加一个看门狗。真正的大脑全在你",
+    "自己的服务器上：语音识别、状态机、排版、调度 agent。"
+   ]
+  ],
+  "ascii_short": [
+   [
+    "Hello, world!"
+   ]
+  ],
+  "ascii_long": [
+   [
+    "The quick brown fox jumps over the lazy dog. The quick brown fox ",
+    "jumps over the lazy dog. The quick brown fox jumps over the lazy ",
+    "dog. The quick brown fox jumps over the lazy dog. The quick ",
+    "brown fox jumps over the lazy dog. The quick brown fox jumps ",
+    "over the lazy dog."
+   ]
+  ],
+  "mixed": [
+   [
+    "我是跑在你私有服务器上的工部 agent，用 faster-whisper 做 AS",
+    "R，走 WebSocket 上行。"
+   ]
+  ],
+  "mixed_dense": [
+   [
+    "用 LVGL 渲染，行高 27px，画布 576x288，字体 evenroster + cn ",
+    "fallback。"
+   ]
+  ],
+  "long_word": [
+   [
+    "单词是 supercalifragilisticexpialidocious 这么长，放不下就只能硬",
+    "切。"
+   ]
+  ],
+  "url_like": [
+   [
+    "见 hub.evenrealities.com 的说明。"
+   ]
+  ],
+  "punct_run": [
+   [
+    "真的吗？？？？？！！！！！这也太夸张了。。。。。。"
+   ]
+  ],
+  "brackets": [
+   [
+    "这是一段话（括号里还有内容《书名号》和「引号」）然后结束",
+    "了。"
+   ]
+  ],
+  "exactly_one_line_cjk": [
+   [
+    "一二三四五六七八九十一二三四五六七八九十一二三四五六七八"
+   ]
+  ],
+  "single_char": [
+   [
+    "好"
+   ]
+  ],
+  "fullwidth": [
+   [
+    "ＡＢＣ１２３％＋－＝　全角字符与 ABC123%+-= 半角对照"
+   ]
+  ],
+  "emoji": [
+   [
+    "做完了 🎉 很高兴 😀 收工"
+   ]
+  ],
+  "missing_glyphs": [
+   [
+    "旧图标  都不在 G2 字库里"
+   ]
+  ],
+  "control_chars": [
+   [
+    "正常文本 中间夹了控制字符 [31m 和转义"
+   ]
+  ],
+  "bidi_spoof": [
+   [
+    "转账给 kcatta 这个账户"
+   ]
+  ],
+  "fake_status": [
+   [
+    "完成",
+    "这行是模型伪造的状态条"
+   ]
+  ],
+  "md_headings": [
+   [
+    "一级标题",
+    "二级",
+    "正文内容在这里。"
+   ]
+  ],
+  "md_emphasis": [
+   [
+    "加粗和斜体还有行内代码混在一起。"
+   ]
+  ],
+  "md_list": [
+   [
+    "• 第一条",
+    "• 第二条",
+    "• 第三条"
+   ]
+  ],
+  "md_ordered": [
+   [
+    "1. 甲",
+    "2. 乙",
+    "3. 丙"
+   ]
+  ],
+  "md_table": [
+   [
+    "前文",
+    "后文",
+    "（含表格共2行，请在手机查看）"
+   ]
+  ],
+  "md_link": [
+   [
+    "详见官方文档说明。"
+   ]
+  ],
+  "md_code_closed": [
+   [
+    "line0",
+    "line1",
+    "line2",
+    "（代码共8行，手机查看全文）"
+   ]
+  ],
+  "md_code_unclosed": [
+   [
+    "开始说明",
+    "def f():",
+    " return 1"
+   ]
+  ],
+  "md_quote": [
+   [
+    "引用的一行",
+    "正文一行"
+   ]
+  ],
+  "empty": [
+   [
+    ""
+   ]
+  ],
+  "spaces_only": [
+   [
+    ""
+   ]
+  ],
+  "newlines": [
+   [
+    "第一段",
+    "",
+    "第二段",
+    "",
+    "第三段"
+   ]
+  ],
+  "trailing_ws": [
+   [
+    "有尾随空格",
+    "第二行"
+   ]
+  ]
+ },
+ "480": {
+  "cjk_short": [
+   [
+    "今天晴，二十六度。"
+   ]
+  ],
+  "cjk_long": [
+   [
+    "三段式：眼镜、手机、服务器。眼镜只有麦克风和一块",
+    "屏，它是一块哑屏，不跑任何业务逻辑。手机上的插件",
+    "是个转发器，把语音往上送、把画面往下发，外加一个",
+    "看门狗。真正的大脑全在你自己的服务器上：语音识",
+    "别、状态机、排版、调度 agent。"
+   ]
+  ],
+  "ascii_short": [
+   [
+    "Hello, world!"
+   ]
+  ],
+  "ascii_long": [
+   [
+    "The quick brown fox jumps over the lazy dog. The quick",
+    " brown fox jumps over the lazy dog. The quick brown ",
+    "fox jumps over the lazy dog. The quick brown fox ",
+    "jumps over the lazy dog. The quick brown fox jumps ",
+    "over the lazy dog. The quick brown fox jumps over the ",
+    "lazy dog."
+   ]
+  ],
+  "mixed": [
+   [
+    "我是跑在你私有服务器上的工部 agent，用 ",
+    "faster-whisper 做 ASR，走 WebSocket 上行。"
+   ]
+  ],
+  "mixed_dense": [
+   [
+    "用 LVGL 渲染，行高 27px，画布 576x288，字体 ",
+    "evenroster + cn fallback。"
+   ]
+  ],
+  "long_word": [
+   [
+    "单词是 supercalifragilisticexpialidocious 这么长，放不",
+    "下就只能硬切。"
+   ]
+  ],
+  "url_like": [
+   [
+    "见 hub.evenrealities.com 的说明。"
+   ]
+  ],
+  "punct_run": [
+   [
+    "真的吗？？？？？！！！！！这也太夸张了。。。。。",
+    "。"
+   ]
+  ],
+  "brackets": [
+   [
+    "这是一段话（括号里还有内容《书名号》和「引号」）",
+    "然后结束了。"
+   ]
+  ],
+  "exactly_one_line_cjk": [
+   [
+    "一二三四五六七八九十一二三四五六七八九十一二三四",
+    "五六七八"
+   ]
+  ],
+  "single_char": [
+   [
+    "好"
+   ]
+  ],
+  "fullwidth": [
+   [
+    "ＡＢＣ１２３％＋－＝　全角字符与 ABC123%+-= 半",
+    "角对照"
+   ]
+  ],
+  "emoji": [
+   [
+    "做完了 🎉 很高兴 😀 收工"
+   ]
+  ],
+  "missing_glyphs": [
+   [
+    "旧图标  都不在 G2 字库里"
+   ]
+  ],
+  "control_chars": [
+   [
+    "正常文本 中间夹了控制字符 [31m 和转义"
+   ]
+  ],
+  "bidi_spoof": [
+   [
+    "转账给 kcatta 这个账户"
+   ]
+  ],
+  "fake_status": [
+   [
+    "完成",
+    "这行是模型伪造的状态条"
+   ]
+  ],
+  "md_headings": [
+   [
+    "一级标题",
+    "二级",
+    "正文内容在这里。"
+   ]
+  ],
+  "md_emphasis": [
+   [
+    "加粗和斜体还有行内代码混在一起。"
+   ]
+  ],
+  "md_list": [
+   [
+    "• 第一条",
+    "• 第二条",
+    "• 第三条"
+   ]
+  ],
+  "md_ordered": [
+   [
+    "1. 甲",
+    "2. 乙",
+    "3. 丙"
+   ]
+  ],
+  "md_table": [
+   [
+    "前文",
+    "后文",
+    "（含表格共2行，请在手机查看）"
+   ]
+  ],
+  "md_link": [
+   [
+    "详见官方文档说明。"
+   ]
+  ],
+  "md_code_closed": [
+   [
+    "line0",
+    "line1",
+    "line2",
+    "（代码共8行，手机查看全文）"
+   ]
+  ],
+  "md_code_unclosed": [
+   [
+    "开始说明",
+    "def f():",
+    " return 1"
+   ]
+  ],
+  "md_quote": [
+   [
+    "引用的一行",
+    "正文一行"
+   ]
+  ],
+  "empty": [
+   [
+    ""
+   ]
+  ],
+  "spaces_only": [
+   [
+    ""
+   ]
+  ],
+  "newlines": [
+   [
+    "第一段",
+    "",
+    "第二段",
+    "",
+    "第三段"
+   ]
+  ],
+  "trailing_ws": [
+   [
+    "有尾随空格",
+    "第二行"
+   ]
+  ]
+ },
+ "360": {
+  "cjk_short": [
+   [
+    "今天晴，二十六度。"
+   ]
+  ],
+  "cjk_long": [
+   [
+    "三段式：眼镜、手机、服务器。眼镜只有",
+    "麦克风和一块屏，它是一块哑屏，不跑任",
+    "何业务逻辑。手机上的插件是个转发器，",
+    "把语音往上送、把画面往下发，外加一个",
+    "看门狗。真正的大脑全在你自己的服务器",
+    "上：语音识别、状态机、排版、调度 ",
+    "agent。"
+   ]
+  ],
+  "ascii_short": [
+   [
+    "Hello, world!"
+   ]
+  ],
+  "ascii_long": [
+   [
+    "The quick brown fox jumps over the lazy ",
+    "dog. The quick brown fox jumps over the ",
+    "lazy dog. The quick brown fox jumps over",
+    " the lazy dog. The quick brown fox jumps ",
+    "over the lazy dog. The quick brown fox ",
+    "jumps over the lazy dog. The quick brown",
+    " fox jumps over the lazy dog."
+   ]
+  ],
+  "mixed": [
+   [
+    "我是跑在你私有服务器上的工部 agent，",
+    "用 faster-whisper 做 ASR，走 WebSocket",
+    " 上行。"
+   ]
+  ],
+  "mixed_dense": [
+   [
+    "用 LVGL 渲染，行高 27px，画布 ",
+    "576x288，字体 evenroster + cn fallbac",
+    "k。"
+   ]
+  ],
+  "long_word": [
+   [
+    "单词是 supercalifragilisticexpialidocious ",
+    "这么长，放不下就只能硬切。"
+   ]
+  ],
+  "url_like": [
+   [
+    "见 hub.evenrealities.com 的说明。"
+   ]
+  ],
+  "punct_run": [
+   [
+    "真的吗？？？？？！！！！！这也太夸张",
+    "了。。。。。。"
+   ]
+  ],
+  "brackets": [
+   [
+    "这是一段话（括号里还有内容《书名号》",
+    "和「引号」）然后结束了。"
+   ]
+  ],
+  "exactly_one_line_cjk": [
+   [
+    "一二三四五六七八九十一二三四五六七八",
+    "九十一二三四五六七八"
+   ]
+  ],
+  "single_char": [
+   [
+    "好"
+   ]
+  ],
+  "fullwidth": [
+   [
+    "ＡＢＣ１２３％＋－＝　全角字符与 ",
+    "ABC123%+-= 半角对照"
+   ]
+  ],
+  "emoji": [
+   [
+    "做完了 🎉 很高兴 😀 收工"
+   ]
+  ],
+  "missing_glyphs": [
+   [
+    "旧图标  都不在 G2 字库里"
+   ]
+  ],
+  "control_chars": [
+   [
+    "正常文本 中间夹了控制字符 [31m 和转义"
+   ]
+  ],
+  "bidi_spoof": [
+   [
+    "转账给 kcatta 这个账户"
+   ]
+  ],
+  "fake_status": [
+   [
+    "完成",
+    "这行是模型伪造的状态条"
+   ]
+  ],
+  "md_headings": [
+   [
+    "一级标题",
+    "二级",
+    "正文内容在这里。"
+   ]
+  ],
+  "md_emphasis": [
+   [
+    "加粗和斜体还有行内代码混在一起。"
+   ]
+  ],
+  "md_list": [
+   [
+    "• 第一条",
+    "• 第二条",
+    "• 第三条"
+   ]
+  ],
+  "md_ordered": [
+   [
+    "1. 甲",
+    "2. 乙",
+    "3. 丙"
+   ]
+  ],
+  "md_table": [
+   [
+    "前文",
+    "后文",
+    "（含表格共2行，请在手机查看）"
+   ]
+  ],
+  "md_link": [
+   [
+    "详见官方文档说明。"
+   ]
+  ],
+  "md_code_closed": [
+   [
+    "line0",
+    "line1",
+    "line2",
+    "（代码共8行，手机查看全文）"
+   ]
+  ],
+  "md_code_unclosed": [
+   [
+    "开始说明",
+    "def f():",
+    " return 1"
+   ]
+  ],
+  "md_quote": [
+   [
+    "引用的一行",
+    "正文一行"
+   ]
+  ],
+  "empty": [
+   [
+    ""
+   ]
+  ],
+  "spaces_only": [
+   [
+    ""
+   ]
+  ],
+  "newlines": [
+   [
+    "第一段",
+    "",
+    "第二段",
+    "",
+    "第三段"
+   ]
+  ],
+  "trailing_ws": [
+   [
+    "有尾随空格",
+    "第二行"
+   ]
+  ]
+ }
+}

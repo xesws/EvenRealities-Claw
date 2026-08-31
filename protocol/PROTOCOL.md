@@ -66,18 +66,32 @@ accessToken 过期 → `{"type":"error","code":"token_expired"}`，客户端用 
 
 规则：
 - **状态切换帧免节流**（立即下发）；同状态内容帧 ≥500ms 间隔（≤2Hz），发送队列只保留最新一帧（coalescing）。
-- `containers` 三个 key 恒在（空串=清空该区）；`\n` 为眼镜端换行，折行已由服务器完成（17 汉字/行，CJK 标点禁则）。
+- `containers` 三个 key 恒在（空串=清空该区）；`\n` 是眼镜端换行（官方文档站明文：*"'\n' is a line break."*）；
+  折行已由服务器按**真实字形度量**完成（像素盒，非字符预算；含 CJK 标点禁则），正文一页 8 行。
 - 客户端唯一职责：seq 过滤 → 三个 `textContainerUpgrade`（120ms 防抖）。
 
 ## 4. 容器布局契约（插件 createStartUpPageContainer 时使用）
 
-| container | ID | name | x,y | w,h | 字号期望 |
-|---|---|---|---|---|---|
-| status | 1 | `status` | 0,0 | 576,32 | 24px |
-| body | 2 | `body` | 0,32 | 576,220 | 32px（17 汉字/行 × 5 行） |
-| foot | 3 | `foot` | 0,252 | 576,36 | 24px |
+**机器可读真源是 [`hud-contract.json`](./hud-contract.json)** —— 网关（Python）与插件（TypeScript）
+都读它，下表只是它的人类可读投影，改动请改 JSON。
 
-（G2 实际字号由固件渲染决定；服务器折行宽度可通过 `gateway` 配置 `wrap_width_chars` 在真机实测后校准。）
+| container | ID | name | x,y | w,h | 行数 | textColor | isEventCapture |
+|---|---|---|---|---|---|---|---|
+| status | 1 | `status` | 0,0 | 576,36 | 1 | 4 | 0 |
+| body | 2 | `body` | 0,36 | 576,216 | **8** | 3 | 0 |
+| foot | 3 | `foot` | 0,252 | 576,36 | 1 | 2 | **1** |
+
+- 行数 = `floor(h / 27)`。**27px 是 G2 固件 LVGL 的固定行高，不可配**；契约里有断言保证
+  每个容器声明的行数与高度自洽。
+- **G2 没有字号控制**，也没有对齐控制 —— 早期表格里的「字号期望」列是虚构的，已删。
+  `textColor`（0~4 五级亮度）是这块屏上唯一真实存在的视觉分层手段。
+- `isEventCapture=1` 挂在 `foot` 而不是 `body` 是有意的：服务器已经做完分页，
+  正文不该再由固件滚动（固件只对 `isEventCapture=1` 的容器做溢出滚动）。一页有且仅能有一个。
+- 折行由服务器按**真实字形度量**完成（`gateway/lens_gateway/formatting/`，与官方
+  `@evenrealities/pretext` 逐条比对零分歧），不再需要「按字符数猜一个安全宽度」。
+  配置项是 `body_safety_px`（默认 0），只作为万一度量库与固件有版本差时的退让阀。
+- 单容器内容上限是 **UTF-8 999 字节**，不是 1000 字符（官方模拟器实测，见
+  [../docs/HARDWARE-SPEC.md](../docs/HARDWARE-SPEC.md) §2.1）。
 
 ## 5. 错误码
 

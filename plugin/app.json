@@ -3,8 +3,8 @@
   "name": "OpenClaw Lens",
   "version": "0.1.0",
   "edition": "202601",
-  "min_app_version": "2.0.0",
-  "min_sdk_version": "0.0.10",
+  "min_app_version": "2.2.9",
+  "min_sdk_version": "0.0.14",
   "entrypoint": "index.html",
   "permissions": [
     {
@@ -12,5 +12,9 @@
       "desc": "将眼镜麦克风语音发送到你的私有 Agent 服务器"
     }
   ],
-  "supported_languages": ["zh", "en"]
+  "supported_languages": [
+    "zh",
+    "en"
+  ],
+  "_note": "min_app_version 是 SDK 0.0.14 在 npm 上声明的 minAppVersion 楼层（2.2.9）。手写值只是兜底：`npm run pack` 会带 --sdk-ver 0.0.14，由 evenhub-cli 从 npm 读取楼层并 stamp 进 .ehpk，两者必须一致。升级 SDK 时同步改这两个字段与 pack 脚本。"
 }

@@ -1,35 +1,70 @@
 /**
- * 眼镜侧封装：容器创建（协议第 4 节布局契约）、120ms 防抖渲染、
- * 镜腿事件归一（含 protobuf 零值字段 CLICK_EVENT=0 → undefined 的归一）、
- * 麦克风透传、设备状态监听。
+ * 眼镜侧封装：容器创建/重建（HUD 契约见 protocol/hud-contract.json）、
+ * 120ms 防抖渲染、镜腿事件归一与分发、麦克风透传、设备遥测。
+ *
+ * 本轮修掉的四个真机级缺陷（详见 docs/HARDWARE-SPEC.md 与 REPORT.md）：
+ *
+ * 1. `FOREGROUND_EXIT_EVENT(5)` 曾被当作"应用被销毁"，与 SYSTEM_EXIT/ABNORMAL_EXIT
+ *    走同一个 teardown → 用户在眼镜上瞥一眼别的再回来，WS 就永久断了、画面冻在最后一帧。
+ *    官方语义是"前台交互层关闭、页面仍挂载"，现在它只是暂停，`FOREGROUND_ENTER(4)` 恢复。
+ * 2. `createStartUpPageContainer` **一个页面生命周期只能调一次**，之后必须
+ *    `rebuildPageContainer`。以前重复调用在 harness 里跑得通、真机上第二次直接失败。
+ * 3. `textContainerUpgrade` 的返回值被丢弃，且 `lastWritten` 在 await **之前**就写了 ——
+ *    一次静默失败就会永久毒化去重缓存，该容器此后再也不会被重写。
+ * 4. 事件只处理了单击/双击，`eventSource` 从未被读取 ⇒ 分不清左右镜腿与 R1 戒指；
+ *    长按在 SDK 0.0.14 才有独立事件码（9/10），旧版会被降级成 CLICK（一次长按=两次误翻页）。
  */
 import {
   CreateStartUpPageContainer,
+  EventSourceType,
+  formatEvenHubPageContainerValidationError,
   OsEventTypeList,
+  RebuildPageContainer,
   TextContainerProperty,
   TextContainerUpgrade,
+  validateEvenHubPageContainer,
   waitForEvenAppBridge,
+  type DeviceInfo,
   type DeviceStatus,
   type EvenAppBridge,
 } from '@evenrealities/even_hub_sdk';
+import { BLANK, EVENT_CAPTURE_CONTAINER, HUD_TEXT, LAYOUT } from './hud';
 import type { FrameContainers } from './types';
 
-/** 容器布局契约（protocol/PROTOCOL.md 第 4 节，坐标尺寸照表）。 */
-export const LAYOUT: ReadonlyArray<{
-  id: number;
-  name: keyof FrameContainers;
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-}> = [
-  { id: 1, name: 'status', x: 0, y: 0, w: 576, h: 32 },
-  { id: 2, name: 'body', x: 0, y: 32, w: 576, h: 220 },
-  { id: 3, name: 'foot', x: 0, y: 252, w: 576, h: 36 },
-];
+export { LAYOUT } from './hud';
 
 /** BLE 渲染队列慢：textContainerUpgrade 用 ~120ms 防抖合并写。 */
 const RENDER_DEBOUNCE_MS = 120;
+
+/**
+ * 所有 bridge 调用的超时（修 B1）。BLE 链路卡住时 bridge 的 Promise 可能永不 settle，
+ * 没有超时就意味着 HUD 永久冻结，启动路径甚至会死锁。
+ */
+const BRIDGE_TIMEOUT_MS = 5000;
+
+/** 手势来源。protobuf 零值省略 ⇒ 缺省按 DUMMY_NULL 处理。 */
+export type InputSource = 'glassesL' | 'glassesR' | 'ring' | 'unknown';
+
+/** 归一化后的镜腿/戒指手势。 */
+export interface InputGesture {
+  kind: 'tap' | 'doubleTap' | 'swipeUp' | 'swipeDown' | 'longPress' | 'longPressRelease';
+  source: InputSource;
+}
+
+export interface GlassesEvents {
+  /** 归一化手势（含来源）。翻页/退出等策略由调用方决定。 */
+  onGesture?: (gesture: InputGesture) => void;
+  /** 应用被真正销毁（系统退出 / 异常退出）——此时才做 teardown */
+  onExit?: () => void;
+  /** 前台交互层关闭：页面仍挂载，只应暂停，绝不能断连接 */
+  onForegroundExit?: () => void;
+  /** 重新回到前台 */
+  onForegroundEnter?: () => void;
+  /** 眼镜麦克风 PCM（16kHz s16le mono） */
+  onAudioPcm?: (pcm: Uint8Array) => void;
+  /** 设备状态推送（电量/佩戴等） */
+  onDeviceStatus?: (status: DeviceStatus) => void;
+}
 
 /** 是否运行在 Even App（或 harness mock）宿主里。 */
 export function hasEvenHost(): boolean {
@@ -52,17 +87,45 @@ export async function connectBridge(timeoutMs = 3000): Promise<EvenAppBridge | n
   return null;
 }
 
-export interface GlassesEvents {
-  /** 单击镜腿（阅读态翻页） */
-  onTap?: () => void;
-  /** 双击镜腿（已自动调用 shutDownPageContainer(1)，这里做收尾） */
-  onDoubleTap?: () => void;
-  /** 系统退出 / 异常退出 / 退到后台 */
-  onExit?: () => void;
-  /** 眼镜麦克风 PCM（16kHz s16le mono） */
-  onAudioPcm?: (pcm: Uint8Array) => void;
-  /** 设备状态（电量/佩戴等），用于手机页展示 */
-  onDeviceStatus?: (status: DeviceStatus) => void;
+/** 给任意 bridge 调用套一层超时，避免 BLE 卡死时永远挂着（修 B1）。 */
+function withTimeout<T>(what: string, p: Promise<T>, fallback: T, ms = BRIDGE_TIMEOUT_MS): Promise<T> {
+  return new Promise<T>((resolve) => {
+    let settled = false;
+    const timer = window.setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      console.warn(`[glasses] ${what} 超时 ${ms}ms，按失败处理`);
+      resolve(fallback);
+    }, ms);
+    p.then(
+      (v) => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timer);
+        resolve(v);
+      },
+      (err) => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timer);
+        console.warn(`[glasses] ${what} 失败:`, err);
+        resolve(fallback);
+      },
+    );
+  });
+}
+
+function sourceOf(raw: unknown): InputSource {
+  switch (EventSourceType.fromJson(raw) ?? EventSourceType.TOUCH_EVENT_FORM_DUMMY_NULL) {
+    case EventSourceType.TOUCH_EVENT_FROM_GLASSES_L:
+      return 'glassesL';
+    case EventSourceType.TOUCH_EVENT_FROM_GLASSES_R:
+      return 'glassesR';
+    case EventSourceType.TOUCH_EVENT_FROM_RING:
+      return 'ring';
+    default:
+      return 'unknown';
+  }
 }
 
 export class GlassesController {
@@ -72,44 +135,14 @@ export class GlassesController {
   private flushTimer: number | null = null;
   private flushing = false;
   private disposed = false;
+  /** createStartUpPageContainer 一个页面生命周期只能调一次，之后走 rebuild。 */
+  private pageCreated = false;
 
   constructor(
     private readonly bridge: EvenAppBridge,
     private readonly events: GlassesEvents = {},
   ) {
-    this.unsubscribers.push(
-      this.bridge.onEvenHubEvent((event) => {
-        // PCM 经 audioEvent 到达（Uint8Array）
-        const pcm = event.audioEvent?.audioPcm;
-        if (pcm && pcm.length > 0) this.events.onAudioPcm?.(pcm);
-
-        // protobuf 零值字段不上线：CLICK_EVENT=0 会以 undefined 到达，
-        // 因此凡是带 sys/text/list 事件体的，eventType 缺省都要归一成 0。
-        let eventType: OsEventTypeList | null = null;
-        if (event.sysEvent) eventType = event.sysEvent.eventType ?? OsEventTypeList.CLICK_EVENT;
-        else if (event.textEvent) eventType = event.textEvent.eventType ?? OsEventTypeList.CLICK_EVENT;
-        else if (event.listEvent) eventType = event.listEvent.eventType ?? OsEventTypeList.CLICK_EVENT;
-        if (eventType === null) return;
-
-        switch (eventType) {
-          case OsEventTypeList.DOUBLE_CLICK_EVENT:
-            // 双击镜腿 = 退出插件，官方标准退出模式
-            void this.exit();
-            this.events.onDoubleTap?.();
-            break;
-          case OsEventTypeList.CLICK_EVENT:
-            this.events.onTap?.();
-            break;
-          case OsEventTypeList.SYSTEM_EXIT_EVENT:
-          case OsEventTypeList.ABNORMAL_EXIT_EVENT:
-          case OsEventTypeList.FOREGROUND_EXIT_EVENT:
-            this.events.onExit?.();
-            break;
-          default:
-            break;
-        }
-      }),
-    );
+    this.unsubscribers.push(this.bridge.onEvenHubEvent((event) => this.onHubEvent(event)));
     this.unsubscribers.push(
       this.bridge.onDeviceStatusChanged((status) => {
         this.events.onDeviceStatus?.(status);
@@ -117,13 +150,83 @@ export class GlassesController {
     );
   }
 
-  /**
-   * 按布局契约创建 3 个文本 container（status/body/foot，ID 1/2/3）。
-   * 返回宿主结果码：0 = 成功；非 0 时调用方应在手机页显示错误。
-   */
-  async createContainers(): Promise<number> {
-    const textObject = LAYOUT.map(
-      (def, i) =>
+  // ---------------------------------------------------------------- 事件
+
+  private onHubEvent(event: {
+    audioEvent?: { audioPcm?: Uint8Array };
+    sysEvent?: { eventType?: unknown; eventSource?: unknown };
+    textEvent?: { eventType?: unknown; eventSource?: unknown };
+    listEvent?: { eventType?: unknown; eventSource?: unknown };
+    /** 宿主发来的**原始载荷**，SDK 原样透传。见下方对"缺字段 vs 无法识别"的判别。 */
+    jsonData?: Record<string, unknown>;
+  }): void {
+    const pcm = event.audioEvent?.audioPcm;
+    if (pcm && pcm.length > 0) this.events.onAudioPcm?.(pcm);
+
+    const body = event.sysEvent ?? event.textEvent ?? event.listEvent;
+    if (!body) return;
+
+    // 「字段缺省」与「字段存在但 SDK 认不出来」必须区分开，否则任何未知系统事件
+    // 都会退化成一次幽灵翻页（B4-①）。两者在解析后的 sysEvent 里长得一模一样：
+    // 实测 SDK 对 eventType=99 交付的是 `sysEvent:{}`，与 `{}` 无从分辨。
+    // 但 SDK 会**原样透传 jsonData**，判据就在那里：
+    //   - 两处都没有 eventType ⇒ 真的是 protobuf 零值省略 ⇒ CLICK_EVENT
+    //   - jsonData 里有、但 fromJson 认不出 ⇒ 未知事件 ⇒ 忽略
+    const rawType =
+      (body as { eventType?: unknown }).eventType ?? event.jsonData?.eventType;
+    const eventType =
+      rawType === undefined || rawType === null
+        ? OsEventTypeList.CLICK_EVENT
+        : OsEventTypeList.fromJson(rawType);
+    if (eventType === undefined) {
+      console.warn('[glasses] 未识别的 eventType，已忽略:', rawType);
+      return;
+    }
+
+    const source = sourceOf(
+      (body as { eventSource?: unknown }).eventSource ?? event.jsonData?.eventSource,
+    );
+
+    switch (eventType) {
+      case OsEventTypeList.CLICK_EVENT:
+        this.events.onGesture?.({ kind: 'tap', source });
+        break;
+      case OsEventTypeList.DOUBLE_CLICK_EVENT:
+        this.events.onGesture?.({ kind: 'doubleTap', source });
+        break;
+      case OsEventTypeList.SCROLL_TOP_EVENT:
+        this.events.onGesture?.({ kind: 'swipeUp', source });
+        break;
+      case OsEventTypeList.SCROLL_BOTTOM_EVENT:
+        this.events.onGesture?.({ kind: 'swipeDown', source });
+        break;
+      case OsEventTypeList.LONG_PRESS_EVENT:
+        this.events.onGesture?.({ kind: 'longPress', source });
+        break;
+      case OsEventTypeList.LONG_PRESS_RELEASE_EVENT:
+        this.events.onGesture?.({ kind: 'longPressRelease', source });
+        break;
+      case OsEventTypeList.FOREGROUND_ENTER_EVENT:
+        this.events.onForegroundEnter?.();
+        break;
+      case OsEventTypeList.FOREGROUND_EXIT_EVENT:
+        // 前台交互层关闭，页面**仍然挂载** —— 只暂停，不断连接
+        this.events.onForegroundExit?.();
+        break;
+      case OsEventTypeList.SYSTEM_EXIT_EVENT:
+      case OsEventTypeList.ABNORMAL_EXIT_EVENT:
+        this.events.onExit?.();
+        break;
+      default:
+        break;
+    }
+  }
+
+  // ---------------------------------------------------------------- 容器
+
+  private buildProperties(): TextContainerProperty[] {
+    return LAYOUT.map(
+      (def) =>
         new TextContainerProperty({
           xPosition: def.x,
           yPosition: def.y,
@@ -133,27 +236,62 @@ export class GlassesController {
           paddingLength: 0,
           containerID: def.id,
           containerName: def.name,
-          content: def.name === 'status' ? '⛓ 等待连接…' : ' ',
-          // 一个页面必须且仅能有一个容器 isEventCapture=1（最后一个容器处理事件）
-          isEventCapture: i === LAYOUT.length - 1 ? 1 : 0,
+          content: def.name === 'status' ? HUD_TEXT.booting : BLANK,
+          // 一个页面必须且仅能有一个容器 isEventCapture=1。挂在 foot：服务器已做完分页，
+          // body 不该由固件滚动（固件只对 isEventCapture=1 的容器做溢出滚动）。
+          isEventCapture: def.name === EVENT_CAPTURE_CONTAINER ? 1 : 0,
+          // 五级亮度（0~4，SDK 0.0.14+）。没有字号也没有对齐控制，这是仅有的视觉分层手段。
+          ...(def.textColor === undefined ? {} : { textColor: def.textColor }),
         }),
     );
-    try {
-      const result = await this.bridge.createStartUpPageContainer(
-        new CreateStartUpPageContainer({
-          containerTotalNum: LAYOUT.length,
-          textObject,
-        }),
-      );
-      if (result === 0) {
-        this.lastWritten = { status: '⛓ 等待连接…', body: ' ', foot: ' ' };
-      }
-      return result;
-    } catch (err) {
-      console.error('[glasses] createStartUpPageContainer 异常:', err);
-      return -1;
-    }
   }
+
+  /**
+   * 建立三个文本 container。首次走 createStartUpPageContainer（**只能调一次**），
+   * 之后走 rebuildPageContainer。返回 0 表示成功。
+   */
+  async createContainers(): Promise<number> {
+    const textObject = this.buildProperties();
+
+    // SDK 自带的建页校验（zOrderIndex / textColor / menu 三类）。它**不**覆盖内容长度、
+    // isEventCapture 数量、containerName 长度与几何越界——那几项由宿主/固件执行，
+    // harness 夹具补上了。这里先跑一遍能在本地拦下的，免得白白发一次 BLE 往返。
+    const verdict = validateEvenHubPageContainer({ textObject });
+    if (!verdict.valid) {
+      console.error('[glasses] 建页参数未通过 SDK 校验:', formatEvenHubPageContainerValidationError(verdict));
+      this.lastWritten = {};
+      return 1; // StartUpPageCreateResult.invalid
+    }
+
+    let result: number;
+    if (!this.pageCreated) {
+      result = await withTimeout(
+        'createStartUpPageContainer',
+        this.bridge.createStartUpPageContainer(
+          new CreateStartUpPageContainer({ containerTotalNum: LAYOUT.length, textObject }),
+        ) as Promise<number>,
+        -1,
+      );
+      if (result === 0) this.pageCreated = true;
+    } else {
+      const ok = await withTimeout(
+        'rebuildPageContainer',
+        this.bridge.rebuildPageContainer(
+          new RebuildPageContainer({ containerTotalNum: LAYOUT.length, textObject }),
+        ),
+        false,
+      );
+      result = ok ? 0 : -1;
+    }
+    if (result === 0) {
+      this.lastWritten = { status: HUD_TEXT.booting, body: BLANK, foot: BLANK };
+    } else {
+      this.lastWritten = {}; // 建页失败：去重缓存必须清空，否则后续写入会被误判为"无变化"
+    }
+    return result;
+  }
+
+  // ---------------------------------------------------------------- 渲染
 
   /** 渲染一帧（120ms 防抖合并；只更新内容有变化的 container）。 */
   renderFrame(containers: FrameContainers): void {
@@ -165,33 +303,34 @@ export class GlassesController {
    * 本地看门狗专用：立即把一条状态写到 status container（绕过防抖），
    * 用于断线时消灭"旧帧撒谎"。
    */
-  pushStatusNow(text: string): void {
+  async pushStatusNow(text: string): Promise<boolean> {
     if (this.pending) this.pending.status = text;
-    this.lastWritten.status = text;
-    void this.bridge
-      .textContainerUpgrade(
+    const ok = await withTimeout(
+      'textContainerUpgrade(status/watchdog)',
+      this.bridge.textContainerUpgrade(
         new TextContainerUpgrade({ containerID: 1, containerName: 'status', content: text }),
-      )
-      .catch((err) => console.warn('[glasses] 看门狗帧写入失败:', err));
+      ),
+      false,
+    );
+    // 只有确认写成功才更新去重缓存（修：以前无条件写，一次失败就永久毒化缓存）
+    if (ok) this.lastWritten.status = text;
+    else delete this.lastWritten.status;
+    return ok;
   }
 
-  /** 麦克风开关透传。 */
+  /** 麦克风开关。返回值是**插件判断麦克风是否真的开了**的唯一依据（修 B3）。 */
   async audioControl(open: boolean): Promise<boolean> {
-    try {
-      return await this.bridge.audioControl(open);
-    } catch (err) {
-      console.warn('[glasses] audioControl 失败:', err);
-      return false;
-    }
+    return withTimeout('audioControl', this.bridge.audioControl(open), false);
+  }
+
+  /** 读设备遥测（电量/佩戴/连接）。以前从未被调用 ⇒ 网关对这些一无所知。 */
+  async getDeviceInfo(): Promise<DeviceInfo | null> {
+    return withTimeout('getDeviceInfo', this.bridge.getDeviceInfo(), null);
   }
 
   /** 官方标准退出：弹出前台交互层由用户确认。 */
   async exit(): Promise<void> {
-    try {
-      await this.bridge.shutDownPageContainer(1);
-    } catch (err) {
-      console.warn('[glasses] shutDownPageContainer 失败:', err);
-    }
+    await withTimeout('shutDownPageContainer', this.bridge.shutDownPageContainer(1), false);
   }
 
   dispose(): void {
@@ -222,20 +361,27 @@ export class GlassesController {
           // 协议规定三个 key 恒在；此处仍容错 undefined。
           // 空串经 protobuf 零值省略可能到不了固件，用单个空格做"清空"。
           const raw = target[def.name] ?? '';
-          const content = raw === '' ? ' ' : raw;
+          const content = raw === '' ? BLANK : raw;
           if (content === this.lastWritten[def.name]) continue;
-          this.lastWritten[def.name] = content;
-          try {
-            // 串行写，避免 BLE 渲染队列并发
-            await this.bridge.textContainerUpgrade(
+          // 串行写，避免 BLE 渲染队列并发
+          const ok = await withTimeout(
+            `textContainerUpgrade(${def.name})`,
+            this.bridge.textContainerUpgrade(
               new TextContainerUpgrade({
                 containerID: def.id,
                 containerName: def.name,
                 content,
               }),
-            );
-          } catch (err) {
-            console.warn(`[glasses] textContainerUpgrade(${def.name}) 失败:`, err);
+            ),
+            false,
+          );
+          if (ok) {
+            // 写确认之后才记缓存。以前记在 await 之前，一次静默失败就会让
+            // 这个容器"内容与缓存永远一致"，此后再也不会被重写。
+            this.lastWritten[def.name] = content;
+          } else {
+            delete this.lastWritten[def.name];
+            console.warn(`[glasses] ${def.name} 写入未确认，已清除去重缓存以便下次重试`);
           }
         }
       }

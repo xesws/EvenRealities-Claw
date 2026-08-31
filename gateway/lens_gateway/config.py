@@ -6,10 +6,13 @@ OpenClaw 网关 token 在运行时从其配置文件读取，永不出服务器�
 from __future__ import annotations
 
 import json
+import logging
 import os
 import secrets
 from dataclasses import dataclass, field
 from pathlib import Path
+
+log = logging.getLogger(__name__)
 
 STATE_DIR = Path(os.environ.get("LENS_STATE_DIR", "~/.lens-gateway")).expanduser()
 
@@ -42,14 +45,36 @@ class AsrConfig:
 
 @dataclass
 class ComposerConfig:
-    wrap_chars: int = 17        # 每行汉字数（真机实测后校准）
-    lines_per_page: int = 5
-    throttle_ms: int = 500      # 同状态内容帧最小间隔（2Hz）
-    confirm_seconds: float = 1.2     # 转写确认停留
+    """排版与帧编排。
+
+    注意：这里**没有**「每行几个字」「每页几行」这类旋钮了 —— 它们由
+    `formatting.layout` 的像素版式和固件的 27px 固定行高唯一决定
+    （官方：*"Pagination is driven by the container's real pixel box,
+    not a character budget."*）。旧的 `wrap_chars` / `lines_per_page`
+    已移除；`Config.load` 遇到它们会告警并忽略，不会让网关起不来。
+    """
+
+    glyph_profile: str = "symbol"        # HUD 字形档位：symbol / cjk / ascii
+    glyph_overrides: dict[str, str] = field(default_factory=dict)  # 按语义名覆盖单个字形
+    body_safety_px: int = 0              # 正文折行的额外退让像素（默认 0：度量与固件逐位一致）
+    throttle_ms: int = 500               # 同状态内容帧最小间隔（2Hz）
+    confirm_seconds: float = 1.2         # 转写确认停留
     confirm_seconds_low_conf: float = 3.0
-    low_conf_threshold: float = -0.9  # avg_logprob 低于此值视为低置信
-    reading_idle_seconds: float = 60.0  # 阅读态无操作回待机
+    low_conf_threshold: float = -0.9     # avg_logprob 低于此值视为低置信
+    reading_idle_seconds: float = 60.0   # 阅读态无操作回待机
     final_short_linger_seconds: float = 15.0
+
+    def __post_init__(self) -> None:
+        if self.throttle_ms < 0:
+            raise ValueError(f"throttle_ms 不能为负：{self.throttle_ms}")
+        if self.body_safety_px < 0 or self.body_safety_px >= 200:
+            raise ValueError(f"body_safety_px 应在 [0, 200)：{self.body_safety_px}")
+        for name, val in (("confirm_seconds", self.confirm_seconds),
+                          ("confirm_seconds_low_conf", self.confirm_seconds_low_conf),
+                          ("reading_idle_seconds", self.reading_idle_seconds),
+                          ("final_short_linger_seconds", self.final_short_linger_seconds)):
+            if val < 0:
+                raise ValueError(f"{name} 不能为负：{val}")
 
 
 @dataclass
@@ -71,8 +96,16 @@ class Config:
                 if key in raw:
                     setattr(cfg, key, raw[key])
             for key, cls in (("openclaw", OpenClawConfig), ("asr", AsrConfig), ("composer", ComposerConfig)):
-                if key in raw:
-                    setattr(cfg, key, cls(**{**cls().__dict__, **raw[key]}))
+                if key not in raw:
+                    continue
+                known = cls().__dict__
+                section = raw[key]
+                unknown = sorted(set(section) - set(known))
+                if unknown:
+                    # 未知键**告警并忽略**，不再抛 TypeError。
+                    # 原来的行为意味着：照着 PROTOCOL.md 写一个已改名的键，网关直接起不来。
+                    log.warning("配置 %s 中的未知键已忽略：%s（文件：%s）", key, ", ".join(unknown), path)
+                setattr(cfg, key, cls(**{**known, **{k: v for k, v in section.items() if k in known}}))
         return cfg
 
     def resolve_plugin_dist(self) -> Path | None:
