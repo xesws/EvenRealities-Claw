@@ -17,6 +17,44 @@ env:
   NODE_VERSION: '22'
 
 jobs:
+  units:
+    name: 部署（systemd unit 语法）
+    runs-on: ubuntu-latest
+    # unit 写错的表现是**开机时静默失败**：systemd 记一行到 journal 就没了，
+    # 而人只会在「重启之后眼镜连不上」时才发现，跟改坏的那一行隔着几天。
+    # 这正是最难自己浮出来的那类错，也是 deploy/ 这块补丁本身要解决的问题。
+    steps:
+      - uses: actions/checkout@v4
+      - name: systemd-analyze verify
+        run: |
+          set -euo pipefail
+          systemd-analyze --version | head -1
+          systemd-analyze --help | grep -q -- --recursive-errors \
+            || { echo '❌ 这个 systemd 不认识 --recursive-errors（需要 v249+）'; exit 1; }
+
+          # 先证明这条检查真的会红。「校验命令在这个环境里恒返回 0」和
+          # gateway job 里那个「oracle 静默 skip」是同一类事故：CI 是绿的，
+          # 而它声称验过的东西根本没被验过。所以拿一个必然非法的 unit 先喂一遍
+          # —— [Service] 段没有任何 ExecStart，systemd 会直接拒绝加载。
+          mkdir -p /tmp/canary
+          printf '[Service]\nType=simple\n' > /tmp/canary/canary.service
+          if systemd-analyze --user --recursive-errors=no verify /tmp/canary/canary.service
+          then echo '❌ 连没有 ExecStart 的 unit 都通过了 —— 这条检查是摆设'; exit 1; fi
+          echo '✓ 坏 unit 被拒，检查有效'
+
+          # unit 用 %h 指向 venv 里的 python，而 verify 会真的去 stat ExecStart
+          # 指向的文件（找不到是 error，不是 warning）。所以先在 $HOME 下摆一个
+          # 同名的可执行文件 —— 这样验的是真实的路径拼装，而不是绕过这项检查。
+          mkdir -p "$HOME/EvenRealities-Claw/gateway/.venv/bin"
+          ln -sf "$(command -v python3)" "$HOME/EvenRealities-Claw/gateway/.venv/bin/python"
+          # --user：这两个是**用户** unit（WantedBy=default.target，装到
+          #   ~/.config/systemd/user/）。系统作用域下 %h 解析成 /root，验的是错路径。
+          # --recursive-errors=no：只报被指定 unit 自己的错。lens-gateway 的
+          #   After=lens-agent.service 在 CI 里没装，而 After= 本来就允许指向不存在
+          #   的 unit（no-op）—— 不关掉的话，这里会因为一件完全正常的事变红。
+          systemd-analyze --user --recursive-errors=no verify deploy/*.service
+          echo '✓ deploy/*.service 通过'
+
   plugin:
     name: 插件（typecheck + vitest + build）
     runs-on: ubuntu-latest

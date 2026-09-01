@@ -1,0 +1,19 @@
+# 这是**模板**，直接 cp 到 /etc/caddy/Caddyfile 是不通的 —— 域名那行还是占位符。
+# 生成实际配置：LENS_DOMAIN=lens.example.com bash scripts/install-tls.sh
+# TEMPLATE-ONLY-END（这一行及以上只属于模板；生成时脚本会把它们换成一句「由谁生成」）
+
+# Lens Gateway 的 TLS 前端（Caddy v2）。
+#
+# Caddy v2 对 WebSocket 是**透明代理**：reverse_proxy 原样转发 Upgrade / Connection
+# 头，/ws 那条连接不需要任何额外指令。网上仍在流传的 `@websocket` 匹配器写法是
+# Caddy v1 时代的遗留，v2 里加上它只会多出一段永远命中同一个上游的死代码 ——
+# 看着像在做事，实际什么都没改变，还让下一个人以为不加就不通。
+#
+# reverse_proxy 会自动带上 X-Forwarded-For。网关的 _client_key() 只有在
+# config.json 的 trust_forwarded_for = true 时才采信它（装机脚本会一并打开）——
+# 不打开的话，配对节流会把所有请求都算到 127.0.0.1 这一个来源头上。
+{$LENS_DOMAIN} {
+	# 上游是网关的明文口。它必须只监听回环（config.json 的 host = "127.0.0.1"），
+	# 否则原来的 0.0.0.0:8443 还开着，任何人都能绕过 TLS 直连明文口。
+	reverse_proxy 127.0.0.1:8443
+}

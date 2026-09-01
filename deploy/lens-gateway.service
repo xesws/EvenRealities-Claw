@@ -3,6 +3,12 @@
 [Unit]
 Description=OpenClaw Lens Gateway (Even Realities glasses bridge)
 After=network-online.target
+# 仅排序，**不加** Requires=/Wants=：agent 不在也能起，网关会在首次说话时重连它。
+# 但顺序要管：_warmup 只在启动时试一次连接，agent 若晚于网关起来，
+# /healthz 的 agent.connected 就会一直是 false 直到有人真的说了第一句话 ——
+# 开机后 curl 一下健康检查的人会以为坏了。
+# After= 指向一个没安装的 unit 时是 no-op，所以 provider=openclaw 的部署不受影响。
+After=lens-agent.service
 
 [Service]
 Type=simple

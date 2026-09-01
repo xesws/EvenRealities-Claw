@@ -1,0 +1,40 @@
+# Lens Agent — systemd user unit
+# 安装：bash scripts/install-agent-service.sh
+#
+# 只有 ~/.lens-gateway/config.json 里 agent.provider = "lens" 时才用得到它。
+# 默认的 openclaw provider 连的是别的进程，装了这个也没人会去连。
+[Unit]
+Description=Lens Agent (self-hosted agent for the Even Realities glasses gateway)
+After=network-online.target
+
+# 刻意**不写** Requires= / BindsTo= / PartOf= 与 lens-gateway.service 的任何强绑定：
+# 网关对 agent 是纯客户端。providers/lens.py 的 ensure_connected() 是懒连接
+# —— socket 没了，下一次 chat_send 自己重连；server.py 的 _warmup 只在启动时试一次
+# 并吞掉失败（日志原话「将在首次使用时重试」）。绑上依赖唯一的效果是
+# 「重启 agent 顺手带走网关」，而那会把所有已连眼镜的 WebSocket 一起踢掉 ——
+# 代价远大于收益，两个 unit 必须能各自单独重启。
+
+[Service]
+Type=simple
+WorkingDirectory=%h/EvenRealities-Claw/gateway
+Environment=PYTHONPATH=%h/EvenRealities-Claw/gateway
+# 复用仓库根 .env 里的 LLM 凭证（LENS_LLM_API_KEY 或 OPENAI_API_KEY，见
+# lens_agent/llm/deepseek.py 的 read_api_key）。
+# 前缀 `-` 是刻意的：文件缺失时不让 unit 直接起不来。真正的「缺 key」由
+# scripts/install-agent-service.sh 的 preflight 当场点名缺哪个变量；
+# 交给 systemd 的话，得到的只是 journal 里一句没人会去看的 status=203。
+EnvironmentFile=-%h/EvenRealities-Claw/.env
+# 作答语言。它与网关 config.json 的 asr.language、composer.locale 是**三个独立开关**，
+# 不一致的表现是「听懂了中文、用英文答」这种没人会往配置上想的怪象。
+# 装机脚本发现网关那边不是 zh 时，会写一份 drop-in 覆盖这一行。
+Environment=LENS_AGENT_LOCALE=zh
+ExecStart=%h/EvenRealities-Claw/gateway/.venv/bin/python -m lens_agent.server
+Restart=always
+RestartSec=3
+# agent 只做 HTTP 转发 + JSON 读写，不跑模型，512M 绰绰有余。
+# 留这个上限是为了让泄漏在长成 OOM-killer 挑走网关（3G，是这台机器上最肥的目标）之前，
+# 先被 systemd 按在自己身上。
+MemoryMax=512M
+
+[Install]
+WantedBy=default.target
