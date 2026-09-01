@@ -13,6 +13,9 @@
 环境变量：
     LENS_STATE_DIR   网关状态目录（默认 ~/.lens-gateway-lens-en，即 --lens --en 用的那个）
     LENS_BASE        网关地址（默认 http://127.0.0.1:8443）
+
+`--linger=<秒>` 会在收尾帧之后继续听：提醒到点是**后来**发生的事，
+那一轮早就结束了，不多听一会儿就看不到它上屏。
 """
 from __future__ import annotations
 
@@ -43,7 +46,7 @@ def _admin(path: str) -> urllib.request.Request:
                                   headers={"Authorization": f"Bearer {token}"})
 
 
-async def main(wav_path: str) -> int:
+async def main(wav_path: str, linger: float = 0.0) -> int:
     with wave.open(wav_path) as w:
         assert w.getframerate() == 16000 and w.getnchannels() == 1, (
             f"需要 16kHz 单声道，实际 {w.getframerate()}Hz/{w.getnchannels()}ch")
@@ -107,12 +110,31 @@ async def main(wav_path: str) -> int:
         print(f"\n--- 收尾帧（{done['state']}）---")
         print(done["containers"]["body"])
         print(f"\n页脚：{done['containers']['foot']!r}")
+
+        if linger > 0:
+            # 提醒到点是**后来**发生的事：那一轮早结束了，帧是 agent 主动
+            # 请求、网关按租约写上去的。不多听一会儿就看不到它。
+            print(f"\n--- 继续听 {linger:.0f}s，看有没有后续帧（提醒到点）---")
+            end = time.time() + linger
+            while time.time() < end:
+                o = await until(lambda o: o.get("type") == "frame", end - time.time())
+                if o is None:
+                    break
+                c = o["containers"]
+                print(f'  +{time.time() - t0:5.1f}s  {o["state"]}  {c["status"]:26} | '
+                      f'{c["body"].replace(chr(10), " / ")[:66]}')
+
         pumping.cancel()
         await ws.close()
     return 0
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
+    linger = 0.0
+    for a in sys.argv[1:]:
+        if a.startswith("--linger="):
+            linger = float(a.split("=", 1)[1])
+    if len(args) != 1:
         sys.exit(__doc__)
-    raise SystemExit(asyncio.run(main(sys.argv[1])))
+    raise SystemExit(asyncio.run(main(args[0], linger)))

@@ -89,6 +89,7 @@ HUD_MESSAGES: dict[str, dict[str, str]] = {
         "agent_error_hint": "按住说话可重试",
         "aborted_word": "已打断",
         "link_lost": "与 agent 的连接在这一轮发送过程中断开",
+        "reminder_title": "提醒",
     },
     "en": {
         "mic_silent_word": "no audio",
@@ -102,6 +103,7 @@ HUD_MESSAGES: dict[str, dict[str, str]] = {
         "agent_error_hint": "Hold to talk to retry",
         "aborted_word": "stopped",
         "link_lost": "Lost the connection to the agent mid-turn",
+        "reminder_title": "Reminder",
     },
 }
 

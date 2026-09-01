@@ -23,6 +23,7 @@ from .auth import AuthStore
 from .config import STATE_DIR, Config, control_secret, jwt_secret
 from .control import ControlPlane
 from .providers import AgentProvider, build_provider
+from .device import LeaseHeld
 from .session import DeviceSession
 
 log = logging.getLogger(__name__)
@@ -35,11 +36,40 @@ class LensServer:
         self.control_secret = control_secret()
         self.asr = AsrEngine(cfg.asr)
         self.agent: AgentProvider = build_provider(cfg)
+        # 提醒到点：agent 那头发一条不属于任何 run 的事件，网关负责把它显示出来。
+        # **屏幕归网关**，所以响铃这一步必须落在这里，而不是让 agent 反过来打控制面。
+        # 用 setattr 而不是写死在 AgentProvider 协议里：只有自研 agent 有这条通路，
+        # 第三方 OpenClaw 网关没有，不该为它加一个恒为 None 的字段。
+        if hasattr(self.agent, "on_notify"):
+            self.agent.on_notify = self._on_agent_notify
         self.sessions: dict[str, DeviceSession] = {}      # deviceId -> 常驻会话
         self.active_ws: dict[str, web.WebSocketResponse] = {}  # deviceId -> 当前连接
         self._sweeper: asyncio.Task | None = None
 
     # ---------- app ----------
+
+    async def _on_agent_notify(self, session_key: str, text: str) -> None:
+        """一条提醒到点了，把它写到那副眼镜上。
+
+        走**外部渲染租约**（W1），和 MCP 写屏是同一条路：这样它和正在进行的
+        对话之间的仲裁规则只有一套 —— 用户正说着话时提醒不该插进来抢屏，
+        而租约冲突本来就是这么处理的。
+        """
+        device_id = session_key.split(":", 1)[-1]
+        session = self.sessions.get(device_id)
+        if session is None:
+            log.info("提醒到点，但设备 %s 不在线，丢弃：%s", device_id, text[:40])
+            return
+        try:
+            lease = session.hud.acquire_lease("reminder", ttl_ms=30_000)
+            session.hud.render_external(lease.id, text,
+                                        title=session.hud.msg("reminder_title"),
+                                        hold_ms=self.cfg.composer.reminder_hold_ms)
+        except LeaseHeld as held:
+            # 别人正拿着屏幕（MCP 客户端在写）。提醒不抢 —— 抢屏比迟到更糟。
+            log.info("提醒到点但屏幕被 %s 占着，跳过：%s", held.holder, text[:40])
+        except Exception:
+            log.exception("提醒上屏失败：%s", text[:40])
 
     def sweep_sessions(self, now: float | None = None) -> list[str]:
         """回收离线且静默超过 TTL 的会话（修 S4）。

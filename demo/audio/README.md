@@ -7,7 +7,16 @@ lens_agent、同一个 DeepSeek、同一个排版引擎、同一套帧下发。
 | 文件 | 台词 | 演示的东西 |
 |---|---|---|
 | `en-weather.wav` | *What's the weather like today? Do I need a jacket?* | 真工具调用（S5 天气态）+ 真实时数据；答案一页放得下 |
-| `en-navigation.wav` | *How do I get to Golden Gate Park from downtown?* | 长回答分页：首页排满 8 行，页脚 `1/2 ›`，可翻页 |
+| `en-navigation.wav` | *How do I get to Golden Gate Park from downtown?* | 一整段有用的回答，一页放得下 |
+| `en-park.wav` | *What are the top five things to see in Golden Gate Park?* | 长回答分页：页脚 `1/2 ›`，可翻页 |
+| `en-remind.wav` | *Remind me in twenty seconds to check the oven.* | **写能力**：真的排了一条提醒，20 秒后自己上屏（`S9 Lens ◆ Reminder`）|
+
+`en-remind.wav` 要配 `--linger` 才看得到那一帧 —— 提醒到点是**后来**发生的事，
+那一轮早就结束了：
+
+```sh
+cd gateway && .venv/bin/python ../demo/verify_audio.py ../demo/audio/en-remind.wav --linger=35
+```
 
 ## 怎么生成的
 

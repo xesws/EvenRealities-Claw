@@ -291,10 +291,19 @@ class TestRouting:
         ("离圣诞还有几天", "daily"),
         ("How many days until Christmas?", "daily"),
         ("What time is it?", "daily"),
+        # 提醒/定时器：带「多久之后」的归 remind，不带的（= 记一笔）归 list
+        ("Set a timer for 10 minutes", "remind"),
+        ("10 分钟后提醒我关火", "remind"),
+        ("半小时后叫我", "remind"),
+        ("remind me in 20 minutes to leave", "remind"),
+        ("有什么提醒", "remind"),
+        ("取消那个提醒", "remind"),
+        ("cancel the timer", "remind"),
+        ("提醒我买牛奶", "list"),          # 没有时间量词 ⇒ 是记一笔，不是定时
         # 兜底
         ("讲个笑话", "ask"),
         ("Tell me a joke", "ask"),
-        ("Set a timer for 10 minutes", "ask"),
+        ("讲讲相对论", "ask"),
     ])
     def test_routes_where_it_should(self, question, want):
         assert skills.route(question).name == want

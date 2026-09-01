@@ -21,6 +21,8 @@ import logging
 import uuid
 from dataclasses import dataclass, field
 
+from typing import Awaitable, Callable
+
 import aiohttp
 
 from ..config import AgentConfig
@@ -60,6 +62,10 @@ class LensAgentClient:
         self._info: AgentInfo = UNKNOWN_AGENT
         #: sessionKey → 已发出 chat.send 但还没拿到 runId 的 run（见 chat_send）
         self._pending_runs: dict[str, _Run] = {}
+        #: (sessionKey, text) → 把一条到点的提醒送上屏。由 server 注入。
+        #: **这是唯一一条不属于任何 run 的入站事件** —— 提醒到点时那一轮
+        #: 早就结束了，所以它没有 runId 可以挂靠。
+        self.on_notify: "Callable[[str, str], Awaitable[None]] | None" = None
 
     def info(self) -> AgentInfo:
         return self._info
@@ -206,6 +212,12 @@ class LensAgentClient:
         return "".join(parts)
 
     async def _on_event(self, frame: dict) -> None:
+        if frame.get("event") == "notify":
+            payload = frame.get("payload") or {}
+            key, text = str(payload.get("sessionKey") or ""), str(payload.get("text") or "")
+            if self.on_notify and key and text:
+                await self.on_notify(key, text)
+            return
         if frame.get("event") != "chat":
             return
         payload = frame.get("payload") or {}

@@ -69,6 +69,11 @@ class AgentLoop:
         # 本轮的眼镜状态放进 ContextVar，`device` 工具从那里读。
         # 放在这里而不是工具里去拿，是因为工具不该知道请求是怎么来的。
         tools.DEVICE_STATE.set(req.device_state)
+        # 提醒工具把「要排哪些程」放进这个队列，工具跑完后由本函数发给网关。
+        # **agent 不拥有屏幕**，所以它到点也响不了 —— 它只能请求，由网关去响。
+        scheduled: list[dict] = []
+        tools.PENDING_REMINDERS.set(scheduled)
+        tools.SESSION_KEY.set(req.session_key)
         history = self.history.get(req.session_key, [])
         messages = skill.build_messages(req.message, history)
         schemas = skill.tool_schemas()
@@ -124,6 +129,10 @@ class AgentLoop:
             for call in reply.tool_calls:
                 result = await self._invoke(req, skill, call, deadline, emit)
                 messages.append(result.as_message())
+            # 排程请求紧跟着工具走，不等这一轮说完 —— 万一后面降级收尾，
+            # 提醒也已经交出去了。用户听到「好，10 分钟后叫你」时它必须是真的。
+            while scheduled:
+                await emit("schedule", {"reminder": scheduled.pop(0)})
             # 工具跑完后模型会重新组织正文，屏幕从头来。这是**有意的**：
             # 工具前那段散文（「让我查一下…」，还常带 markdown 反引号）不是答案，
             # 不该留在屏幕上。归零之后下一个 delta 就是新的完整正文。

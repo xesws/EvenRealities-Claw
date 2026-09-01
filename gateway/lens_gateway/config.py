@@ -125,6 +125,11 @@ class ComposerConfig:
     reading_idle_seconds: float = 60.0   # 阅读态无操作回待机
     final_short_linger_seconds: float = 15.0
     session_ttl_seconds: float = 86400.0  # 修 S4：离线且静默超过此时长的会话被回收（0=永不）
+    #: 提醒到点后在屏幕上停多久。给得比阅读态长：提醒是**用户没在看的时候**
+    #: 冒出来的，他抬眼的那一刻可能已经过去十几秒了。
+    #: （状态条上的那个词不在这儿 —— 它跟 locale 走，见 `device/hud.py`
+    #: 的 `HUD_MESSAGES`，那张表有扫描测试盯着不许漏中文。）
+    reminder_hold_ms: int = 45_000
     telemetry_stale_seconds: float = 60.0  # 遥测超过此时长未更新即标记 stale（协议 v1.1）
     battery_warn_percent: int = 15        # 低于此电量在页脚提示一次（0=关闭）
 
@@ -143,6 +148,8 @@ class ComposerConfig:
                           ("session_ttl_seconds", self.session_ttl_seconds)):
             if val < 0:
                 raise ValueError(f"{name} 不能为负：{val}")
+        if self.reminder_hold_ms <= 0:
+            raise ValueError(f"reminder_hold_ms 必须为正：{self.reminder_hold_ms}")
         if self.telemetry_stale_seconds <= 0:
             raise ValueError(f"telemetry_stale_seconds 必须为正：{self.telemetry_stale_seconds}")
         if not 0 <= self.battery_warn_percent <= 100:

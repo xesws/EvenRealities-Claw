@@ -17,6 +17,7 @@ import math
 import operator
 import os
 import pathlib
+import secrets
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -545,6 +546,195 @@ CURRENCY = Tool(
     label=_t("汇率", "Rate"),
 )
 
+# ---------------------------------------------------------------- 提醒
+
+#: ★ 闸 3 的第二个落点：提醒也只写这一个文件，路径写死。
+REMINDERS_PATH = pathlib.Path(
+    os.environ.get("LENS_AGENT_REMINDERS", "~/.lens-agent/reminders.json")).expanduser()
+
+MAX_REMINDERS = 20
+#: 上限 24 小时。一副眼镜不是日程表 —— 超过这个尺度的事应该进日历，
+#: 而我们**没有**日历工具，所以这里必须拒绝而不是假装能记。
+MAX_DELAY_SECONDS = 24 * 3600
+
+#: 本轮新排的提醒。loop 在工具跑完后取走，交给网关去真的响 ——
+#: **agent 不拥有屏幕**，它只能请求。用 ContextVar 的理由同 DEVICE_STATE。
+PENDING_REMINDERS: contextvars.ContextVar[list | None] = contextvars.ContextVar(
+    "pending_reminders", default=None)
+
+#: 本轮是哪副眼镜在说话。提醒必须**连人一起记**：进程重启后从磁盘恢复时，
+#: 没有它就不知道该把「面条好了」发给谁 —— 一个进程是服多副眼镜的。
+SESSION_KEY: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "session_key", default="default")
+
+
+def _load_reminders(grace_seconds: float = 0.0) -> list[dict]:
+    """读盘。默认只给还没到点的。
+
+    `grace_seconds` 是给**恢复**用的：进程或连接断开的那段时间里到点的提醒，
+    晚这么久以内仍然值得补发。默认 0 是给 `remind_list` 用的 —— 用户问
+    「有什么提醒」时，已经响过的不该还在列表里。
+
+    这个参数不是可有可无的装饰：没有它的时候 `restore()` 拿到的是过滤后的列表，
+    **宽限期补发整个是空的** —— 断连期间到点的提醒永远不会响，而且没有任何症状，
+    因为磁盘上那条也会在下次读盘时被这里悄悄丢掉。
+    """
+    try:
+        data = json.loads(REMINDERS_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    if not isinstance(data, list):
+        return []
+    floor = time.time() - max(0.0, grace_seconds)
+    return [r for r in data if isinstance(r, dict) and float(r.get("at", 0)) > floor]
+
+
+def _save_reminders(rows: list[dict]) -> None:
+    REMINDERS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    tmp = REMINDERS_PATH.with_suffix(".tmp")
+    tmp.write_text(json.dumps(rows, ensure_ascii=False, indent=1), encoding="utf-8")
+    tmp.replace(REMINDERS_PATH)
+
+
+def _when(at: float) -> str:
+    """还有多久。**分钟以上不报秒** —— 刚设的「10 分钟后」立刻读回来会变成
+    「9 分 59 秒后」，看着像它记错了。"""
+    left = max(0, at - time.time())
+    if left >= 3600:
+        h, m = int(left // 3600), int(round(left % 3600 / 60))
+        return f"in {h}h {m}m" if LOCALE == "en" else f"{h} 小时 {m} 分钟后"
+    if left >= 60:
+        m = int(round(left / 60))
+        return f"in {m} min" if LOCALE == "en" else f"{m} 分钟后"
+    sec = int(round(left))
+    return f"in {sec}s" if LOCALE == "en" else f"{sec} 秒后"
+
+
+async def _remind_set(args: dict) -> str:
+    text = " ".join(str(args.get("text") or "").split())[:MAX_ITEM_CHARS]
+    if not text:
+        return _t("没有说要提醒什么", "no reminder text given")
+    try:
+        minutes = float(args.get("minutes"))
+    except (TypeError, ValueError):
+        return _t("minutes 必须是数字（分钟）", "minutes must be a number of minutes")
+    if minutes <= 0:
+        return _t("时间必须是将来。", "The time must be in the future.")
+    if minutes * 60 > MAX_DELAY_SECONDS:
+        return _t("最多只能提醒 24 小时以内的事。更久的事请记进日历 —— 我没有日历工具。",
+                  "I can only remind you within 24 hours. Anything further out "
+                  "belongs in a calendar, and I have no calendar tool.")
+    rows = _load_reminders()
+    if len(rows) >= MAX_REMINDERS:
+        return _t(f"待响的提醒已经有 {MAX_REMINDERS} 条了，先取消一条。",
+                  f"There are already {MAX_REMINDERS} reminders pending. Cancel one first.")
+    # id 必须真的唯一。原来用毫秒时间戳取模，同一秒里连排两条就会撞 ——
+    # 而 `ReminderScheduler.schedule` 看到相同 id 会把前一条**取消**再排新的：
+    # `remind_list` 说有两条，实际只会响一条，且没有任何报错。
+    row = {"id": "rm_" + secrets.token_hex(5),
+           "at": time.time() + minutes * 60, "text": text,
+           "session": SESSION_KEY.get()}
+    rows.append(row)
+    _save_reminders(rows)
+    # 排程请求交给上层 —— 真正到点响铃的是网关，因为屏幕是它的。
+    queue = PENDING_REMINDERS.get()
+    if queue is not None:
+        queue.append(dict(row))
+    return _t(f"好，{_when(row['at'])}提醒你：{text}",
+              f"OK, I will remind you {_when(row['at'])}: {text}")
+
+
+def _mine(rows: list[dict]) -> list[dict]:
+    """只看本会话的。一个 agent 进程服多副眼镜，A 不该读到、更不该取消 B 的提醒。"""
+    me = SESSION_KEY.get()
+    return [r for r in rows if str(r.get("session") or "default") == me]
+
+
+async def _remind_list(_args: dict) -> str:
+    rows = sorted(_mine(_load_reminders()), key=lambda r: r["at"])
+    if not rows:
+        return _t("没有待响的提醒。", "There are no reminders pending.")
+    body = "；".join(f"{_when(r['at'])}：{r['text']}" for r in rows) if LOCALE != "en" \
+        else "; ".join(f"{r['text']} ({_when(r['at'])})" for r in rows)
+    return _t(f"有 {len(rows)} 条待响的提醒：{body}",
+              f"{len(rows)} reminders pending: {body}")
+
+
+async def _remind_cancel(args: dict) -> str:
+    want = " ".join(str(args.get("text") or "").split()).casefold()
+    everyone = _load_reminders()
+    rows = _mine(everyone)
+    if not rows:
+        return _t("没有待响的提醒。", "There are no reminders pending.")
+    if not want:
+        # 只有一条时「取消提醒」没有歧义；多条时必须问清楚，不能替用户猜。
+        if len(rows) > 1:
+            return _t("有好几条提醒，问用户要取消哪一条，先别取消。",
+                      "There are several reminders. Ask the user which one; cancel none yet.")
+        hits = rows
+    else:
+        hits = [r for r in rows if want in r["text"].casefold()]
+    if not hits:
+        return _t(f"没有和「{args.get('text')}」对得上的提醒。什么都没取消。",
+                  f"No reminder matches that. Nothing was cancelled.")
+    if len(hits) > 1:
+        return _t("有好几条对得上：" + "、".join(r["text"] for r in hits) +
+                  "。问用户要取消哪一条，先别取消。",
+                  "Several match: " + ", ".join(r["text"] for r in hits) +
+                  ". Ask the user which one; cancel none yet.")
+    gone = hits[0]
+    _save_reminders([r for r in everyone if r["id"] != gone["id"]])
+    queue = PENDING_REMINDERS.get()
+    if queue is not None:
+        queue.append({"id": gone["id"], "cancel": True})
+    return _t(f"已取消提醒：{gone['text']}", f"Cancelled the reminder: {gone['text']}")
+
+
+REMIND_SET = Tool(
+    name="remind_set",
+    description=_t("在若干分钟后提醒用户一件事。用户说「10 分钟后叫我」「半小时后提醒我关火」"
+                   "时用它。**必须真的调用**，不能只是嘴上答应。分钟数可以是小数"
+                   "（0.5 就是 30 秒）。只支持 24 小时以内。",
+                   "Remind the user of something after a number of minutes. Use it "
+                   "when they ask to be reminded, or to be told when time is up. "
+                   "**You must actually call it** -- never just promise. Minutes may be "
+                   "fractional (0.5 = 30 seconds). Within 24 hours only."),
+    capability=Capability.WRITE,
+    budget_ms=200,
+    parameters={"type": "object", "properties": {
+        "minutes": {"type": "number",
+                    "description": "How many minutes from now. Fractions are fine: "
+                                   "0.5 is 30 seconds, 90 is an hour and a half."},
+        "text": {"type": "string", "description": "What to say when it fires, short."}},
+        "required": ["minutes", "text"]},
+    handler=_remind_set,
+    label=_t("提醒", "Remind"),
+    resources=(str(REMINDERS_PATH),),
+)
+
+REMIND_LIST = Tool(
+    name="remind_list",
+    description=_t("列出还没响的提醒。", "List the reminders that have not fired yet."),
+    capability=Capability.READ,
+    budget_ms=100,
+    parameters={"type": "object", "properties": {}},
+    handler=_remind_list,
+    label=_t("提醒", "Remind"),
+)
+
+REMIND_CANCEL = Tool(
+    name="remind_cancel",
+    description=_t("取消一条还没响的提醒。", "Cancel a reminder that has not fired yet."),
+    capability=Capability.WRITE,
+    budget_ms=200,
+    parameters={"type": "object", "properties": {
+        "text": {"type": "string",
+                 "description": "Part of the reminder text. Omit if there is only one."}}},
+    handler=_remind_cancel,
+    label=_t("提醒", "Remind"),
+    resources=(str(REMINDERS_PATH),),
+)
+
 # ---------------------------------------------------------------- 清单
 
 #: ★ 闸 3 的落点：**这是 agent 唯一被允许写的文件，路径写死在这里。**
@@ -725,7 +915,8 @@ LIST_REMOVE = Tool(
 
 REGISTRY: dict[str, Tool] = {t.name: t for t in (
     NOW, DAYS_UNTIL, DEVICE, WEATHER, CALC, CURRENCY,
-    LIST_SHOW, LIST_ADD, LIST_REMOVE)}
+    LIST_SHOW, LIST_ADD, LIST_REMOVE,
+    REMIND_SET, REMIND_LIST, REMIND_CANCEL)}
 
 
 class ToolError(RuntimeError):

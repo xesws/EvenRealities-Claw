@@ -183,6 +183,26 @@ WEATHER = Skill(
     budget_ms=9000,
 )
 
+_REMIND_RULE = {
+    "zh": ("用户要你在过一会儿之后提醒他时，**必须真的调 remind_set**，"
+           "并把分钟数算清楚（半小时=30，一刻钟=15）。绝不能只说「好的我会提醒你」—— "
+           "没调用工具就等于什么都没发生。超过 24 小时的直接说做不到，别硬记。"
+           "问「有什么提醒」用 remind_list，要取消用 remind_cancel。"),
+    "en": ("When the user asks to be reminded of something later, **you must "
+           "actually call remind_set**, working out the minutes yourself "
+           "(half an hour = 30, quarter of an hour = 15). Never just say you "
+           "will remind them -- if you did not call the tool, nothing happened. "
+           "Anything beyond 24 hours: say you cannot. Use remind_list to read "
+           "them back and remind_cancel to cancel one."),
+}
+
+REMIND = Skill(
+    name="remind",
+    system_prompt=_prompt(_REMIND_RULE[LOCALE]),
+    tools=("remind_set", "remind_list", "remind_cancel"),
+    budget_ms=6000,
+)
+
 _DEVICE_RULE = {
     "zh": ("问到眼镜自己的状态（电量、充电、有没有戴着）时必须调 device 工具。"
            "工具说读不到就如实说读不到 —— 绝不能编一个电量百分比。"),
@@ -198,7 +218,7 @@ DEVICE = Skill(
     budget_ms=6000,
 )
 
-SKILLS: dict[str, Skill] = {s.name: s for s in (ASK, DAILY, WEATHER, MATH, LIST, DEVICE)}
+SKILLS: dict[str, Skill] = {s.name: s for s in (ASK, DAILY, WEATHER, MATH, LIST, DEVICE, REMIND)}
 DEFAULT_SKILL = ASK
 
 #: 日常类关键词 → daily。写成正则是为了能穷举测试，而不是让模型"看着办"。
@@ -231,6 +251,20 @@ _LIST = re.compile(
     r"(remember|note|jot) (that|this|down|to)|"
     r"what.{0,12}\bon (my|the) .{0,12}list\b|"
     r"(remove|delete|cross off|take) .{0,24}\b(list|off)\b)", re.I)
+
+#: 提醒/定时器 → remind。排在 list 之前：「提醒我买牛奶」两边都沾，
+#: 但「过一会儿叫我」这层意思只有 remind 能兑现。带时间量词的归 remind，
+#: 不带的（「提醒我买牛奶」= 记一笔）归 list —— 判据就是有没有「多久之后」。
+_REMIND = re.compile(
+    r"((\d+|半|一刻|几)\s*(分钟|分|小时|钟头|秒)(之?后|以后)?\s*(再|叫|提醒|喊|告诉)|"
+    r"(定|设)(个|一个)?(闹钟|定时器|计时器)|倒计时|"
+    r"(提醒|叫|喊)我.{0,12}(分钟|小时|之后|以后)|"
+    r"(分钟|小时|之后|以后).{0,8}(提醒|叫|喊)我|"
+    r"(有|还有)(什么|哪些)?提醒|取消.{0,6}(提醒|闹钟|定时)|"
+    r"\bset (a |an )?(timer|alarm|reminder)\b|\bcountdown\b|"
+    r"remind me (in|after) \d|\b(in|after) \d+ ?(min|minute|hour|hr)s?\b.{0,24}\b(remind|tell|call|ping)\b|"
+    r"\b(remind|tell|ping) me\b.{0,24}\b(in|after) \d+ ?(min|minute|hour|hr)|"
+    r"what (reminders|timers)|cancel (the |my )?(reminder|timer|alarm))", re.I)
 
 #: 眼镜自身 → device。放在很前面：「我眼镜还有多少电」里的「多少」很容易被
 #: 别的档蹭到，而这一档是唯一能给出真实读数的。
@@ -265,8 +299,8 @@ def route(question: str) -> Skill:
     # 顺序即优先级，且**这个顺序本身是安全判据的一部分**：越靠前的档能力越具体。
     # list 排第一是因为它是唯一会真的改状态的一档 —— 用户说「记一下」时，
     # 被别的档抢走的后果是「模型嘴上说记住了、其实什么都没发生」。
-    for pattern, skill in ((_LIST, LIST), (_DEVICE, DEVICE), (_WEATHER, WEATHER),
-                           (_MATH, MATH), (_DAILY, DAILY)):
+    for pattern, skill in ((_REMIND, REMIND), (_LIST, LIST), (_DEVICE, DEVICE),
+                           (_WEATHER, WEATHER), (_MATH, MATH), (_DAILY, DAILY)):
         if pattern.search(q):
             return skill
     return DEFAULT_SKILL

@@ -22,6 +22,8 @@ from . import tools
 from .audit import Audit
 from .llm import DeepSeekProvider, MissingApiKey
 from .loop import AgentLoop, ChatRequest
+from . import reminders
+from .reminders import ReminderScheduler
 
 log = logging.getLogger(__name__)
 
@@ -37,6 +39,10 @@ class LensAgentServer:
         #: sessionKey → 正在跑的任务。眼镜一次只说一句话，同一会话不并发。
         self._runs: dict[str, asyncio.Task] = {}
         self._aborted: set[str] = set()
+        #: 当前这条网关连接。提醒到点时要往它上面发通知 —— 那一刻没有任何
+        #: run 在跑，所以通知不带 runId，走的是一条**主动**的事件。
+        self._ws: web.WebSocketResponse | None = None
+        self.reminders = ReminderScheduler(self._notify)
 
     # ---------------- HTTP/WS ----------------
 
@@ -48,6 +54,7 @@ class LensAgentServer:
         return app
 
     async def _on_cleanup(self, _app: web.Application) -> None:
+        self.reminders.cancel_all()
         for task in list(self._runs.values()):
             task.cancel()
         await self.llm.close()
@@ -57,6 +64,7 @@ class LensAgentServer:
             "ok": True, "protocol": PROTOCOL, "version": VERSION,
             "model": self.llm.model, "provider": self.llm.name,
             "tools": tools.describe(),
+            "reminders_pending": self.reminders.pending,
         })
 
     def hello(self) -> dict:
@@ -111,7 +119,13 @@ class LensAgentServer:
                 try:
                     if method == "connect":
                         shook = True
+                        self._ws = ws
                         await self._res(ws, req_id, self.hello())
+                        # 握手完成才恢复提醒：早于这一刻发通知，网关那头
+                        # 还没准备好接收。sessionKey 由请求方在 chat.send 里给，
+                        # 恢复时只能用磁盘上记着的那一个。
+                        for row in tools._load_reminders(reminders.GRACE_SECONDS):
+                            self.reminders.schedule(str(row.get("session") or "default"), row)
                     elif not shook:
                         await self._err(ws, req_id, "not_connected", "请先 connect")
                     elif method == "chat.send":
@@ -131,8 +145,24 @@ class LensAgentServer:
                 if not task.done():
                     task.cancel()
                 self._runs.pop(key, None)
+            if self._ws is ws:
+                self._ws = None
+            # 待响的提醒**不取消**：连接会重连，而提醒是用户交代过的事。
+            # 断连期间到点的那些由 `restore` 按宽限期补发。
             await ws.close()
         return ws
+
+    async def _notify(self, session_key: str, text: str) -> None:
+        """提醒到点。**这是唯一一条不属于任何 run 的事件。**
+
+        网关据此写屏 —— 屏幕是它的，agent 只能请求。
+        """
+        ws = self._ws
+        if ws is None or ws.closed:
+            # 发不出去就留在磁盘上，等网关重连时 `restore` 在宽限期内补发。
+            raise ConnectionError("网关不在线")
+        await self._send(ws, {"type": "event", "event": "notify",
+                              "payload": {"sessionKey": session_key, "text": text}})
 
     # ---------------- 方法 ----------------
 
@@ -181,7 +211,7 @@ class LensAgentServer:
             await self._event(ws, {"runId": chat.run_id, "state": state, **payload})
 
         try:
-            text = await self.loop.run(chat, self._wrap(emit))
+            text = await self.loop.run(chat, self._wrap(chat, emit))
             if chat.session_key not in self._aborted:
                 await self._event(ws, {
                     "runId": chat.run_id, "state": "final",
@@ -198,13 +228,17 @@ class LensAgentServer:
         finally:
             self._runs.pop(chat.session_key, None)
 
-    @staticmethod
-    def _wrap(emit):
+    def _wrap(self, chat: ChatRequest, emit):
         """把 loop 的 (state, payload) 翻译成协议帧形状。"""
         async def inner(state: str, payload: dict) -> None:
             if state == "delta":
                 await emit("delta", {"message": {"content": [
                     {"type": "text", "text": payload["text"]}]}})
+            elif state == "schedule":
+                # 排程请求**不出网**：它是 agent 内部的事，网关只在到点时
+                # 收到一条 notify。往协议里多塞一种网关根本不需要处理的事件，
+                # 只会让两头都要维护它。
+                self.reminders.schedule(chat.session_key, payload.get("reminder") or {})
             else:
                 await emit(state, payload)
         return inner
