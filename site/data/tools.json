@@ -1,0 +1,109 @@
+{
+ "captured": {
+  "at": "2026-08-31T23:45:21-0700",
+  "commit": "ccfcbc0",
+  "agent": {
+   "backend": "lens",
+   "model": "deepseek-v4-flash",
+   "production": true,
+   "name": "Lens"
+  },
+  "note": "Recorded from the real chain: real mic path, real faster-whisper, real DeepSeek, real tool calls. Replayed verbatim on the site."
+ },
+ "model": "deepseek-v4-flash",
+ "provider": "deepseek",
+ "tools": [
+  {
+   "name": "now",
+   "capability": "read",
+   "budget_ms": 50,
+   "label": "Time",
+   "resources": []
+  },
+  {
+   "name": "days_until",
+   "capability": "read",
+   "budget_ms": 50,
+   "label": "Date",
+   "resources": []
+  },
+  {
+   "name": "device",
+   "capability": "read",
+   "budget_ms": 50,
+   "label": "Device",
+   "resources": []
+  },
+  {
+   "name": "weather",
+   "capability": "read",
+   "budget_ms": 2000,
+   "label": "Weather",
+   "resources": []
+  },
+  {
+   "name": "calc",
+   "capability": "read",
+   "budget_ms": 50,
+   "label": "Math",
+   "resources": []
+  },
+  {
+   "name": "currency",
+   "capability": "read",
+   "budget_ms": 2000,
+   "label": "Rate",
+   "resources": []
+  },
+  {
+   "name": "list_show",
+   "capability": "read",
+   "budget_ms": 100,
+   "label": "List",
+   "resources": []
+  },
+  {
+   "name": "list_add",
+   "capability": "write",
+   "budget_ms": 200,
+   "label": "Save",
+   "resources": [
+    "~/.lens-agent/lists.json"
+   ]
+  },
+  {
+   "name": "list_remove",
+   "capability": "write",
+   "budget_ms": 200,
+   "label": "Remove",
+   "resources": [
+    "~/.lens-agent/lists.json"
+   ]
+  },
+  {
+   "name": "remind_set",
+   "capability": "write",
+   "budget_ms": 200,
+   "label": "Remind",
+   "resources": [
+    "~/.lens-agent/reminders.json"
+   ]
+  },
+  {
+   "name": "remind_list",
+   "capability": "read",
+   "budget_ms": 100,
+   "label": "Remind",
+   "resources": []
+  },
+  {
+   "name": "remind_cancel",
+   "capability": "write",
+   "budget_ms": 200,
+   "label": "Remind",
+   "resources": [
+    "~/.lens-agent/reminders.json"
+   ]
+  }
+ ]
+}

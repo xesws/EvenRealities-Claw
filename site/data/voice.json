@@ -1,0 +1,607 @@
+{
+ "captured": {
+  "at": "2026-09-01T00:32:42-0700",
+  "commit": "ccfcbc0",
+  "agent": {
+   "backend": "lens",
+   "model": "deepseek-v4-flash",
+   "production": true,
+   "name": "Lens"
+  },
+  "note": "Recorded from the real chain: real mic path, real faster-whisper, real DeepSeek, real tool calls. Replayed verbatim on the site."
+ },
+ "scenes": [
+  {
+   "id": "weather",
+   "clip": "en-weather.wav",
+   "blurb": "A real tool call: the model reaches for the weather tool, which hits Open-Meteo.",
+   "transcript": "What's the weather like today? Do I need a jacket?",
+   "audioSeconds": 2.78,
+   "turnSeconds": 8.5,
+   "frames": [
+    {
+     "t": 0.001,
+     "seq": 2,
+     "state": "S2",
+     "status": "Lens ● Listening 0:00",
+     "body": "",
+     "foot": "",
+     "page": {
+      "cur": 1,
+      "total": 1
+     }
+    },
+    {
+     "t": 0.837,
+     "seq": 3,
+     "state": "S2",
+     "status": "Lens ● Listening 0:00",
+     "body": "What's the weather?▌",
+     "foot": "",
+     "page": {
+      "cur": 1,
+      "total": 1
+     }
+    },
+    {
+     "t": 1.679,
+     "seq": 4,
+     "state": "S2",
+     "status": "Lens ● Listening 0:01",
+     "body": "What's the weather like today?▌",
+     "foot": "",
+     "page": {
+      "cur": 1,
+      "total": 1
+     }
+    },
+    {
+     "t": 2.544,
+     "seq": 5,
+     "state": "S2",
+     "status": "Lens ● Listening 0:02",
+     "body": "What's the weather like today? Do I need a jet?▌",
+     "foot": "",
+     "page": {
+      "cur": 1,
+      "total": 1
+     }
+    },
+    {
+     "t": 2.831,
+     "seq": 6,
+     "state": "S3",
+     "status": "Lens → Heard",
+     "body": "",
+     "foot": "",
+     "page": {
+      "cur": 1,
+      "total": 1
+     }
+    },
+    {
+     "t": 3.174,
+     "seq": 7,
+     "state": "S3",
+     "status": "Lens → Heard",
+     "body": "What's the weather like today? Do I need a jacket?",
+     "foot": "",
+     "page": {
+      "cur": 1,
+      "total": 1
+     }
+    },
+    {
+     "t": 4.375,
+     "seq": 8,
+     "state": "S4",
+     "status": "Lens ◐ Thinking 0s",
+     "body": "What's the weather like today? Do I need a jacket?",
+     "foot": "",
+     "page": {
+      "cur": 1,
+      "total": 1
+     }
+    },
+    {
+     "t": 5.376,
+     "seq": 9,
+     "state": "S4",
+     "status": "Lens ◐ Thinking 1s",
+     "body": "What's the weather like today? Do I need a jacket?",
+     "foot": "",
+     "page": {
+      "cur": 1,
+      "total": 1
+     }
+    },
+    {
+     "t": 5.59,
+     "seq": 10,
+     "state": "S5",
+     "status": "Lens ◆ Weather",
+     "body": "What's the weather like today? Do I need a jacket?",
+     "foot": "",
+     "page": {
+      "cur": 1,
+      "total": 1
+     }
+    },
+    {
+     "t": 7.751,
+     "seq": 11,
+     "state": "S6",
+     "status": "Lens ▶ Answer",
+     "body": "It",
+     "foot": "",
+     "page": {
+      "cur": 1,
+      "total": 1
+     }
+    },
+    {
+     "t": 8.252,
+     "seq": 38,
+     "state": "S6",
+     "status": "Lens ▶ Answer",
+     "body": "It's mild today, so a light jacket is enough.\n\nIt is 16 degrees now, feels like 15, overcast with a",
+     "foot": "",
+     "page": {
+      "cur": 1,
+      "total": 1
+     }
+    },
+    {
+     "t": 8.468,
+     "seq": 68,
+     "state": "S7",
+     "status": "Lens √ Done",
+     "body": "It's mild today, so a light jacket is enough.\n\nIt is 16 degrees now, feels like 15, overcast with a light wind. High \nof 20 later. No rain expected. You can skip a heavy coat, but a \nlight jacket will keep you comfortable.",
+     "foot": "",
+     "page": {
+      "cur": 1,
+      "total": 1
+     }
+    }
+   ]
+  },
+  {
+   "id": "navigation",
+   "clip": "en-navigation.wav",
+   "blurb": "A whole useful answer with no tool at all — the lowest-latency path.",
+   "transcript": "How do I get to Golden Gate Park from downtown?",
+   "audioSeconds": 2.73,
+   "turnSeconds": 5.9,
+   "frames": [
+    {
+     "t": 0.0,
+     "seq": 2,
+     "state": "S2",
+     "status": "Lens ● Listening 0:00",
+     "body": "",
+     "foot": "",
+     "page": {
+      "cur": 1,
+      "total": 1
+     }
+    },
+    {
+     "t": 0.837,
+     "seq": 3,
+     "state": "S2",
+     "status": "Lens ● Listening 0:00",
+     "body": "How do I get...▌",
+     "foot": "",
+     "page": {
+      "cur": 1,
+      "total": 1
+     }
+    },
+    {
+     "t": 1.68,
+     "seq": 4,
+     "state": "S2",
+     "status": "Lens ● Listening 0:01",
+     "body": "How do I get to Golden Gate?▌",
+     "foot": "",
+     "page": {
+      "cur": 1,
+      "total": 1
+     }
+    },
+    {
+     "t": 2.53,
+     "seq": 5,
+     "state": "S2",
+     "status": "Lens ● Listening 0:02",
+     "body": "How do I get to Golden Gate Park from downtown?▌",
+     "foot": "",
+     "page": {
+      "cur": 1,
+      "total": 1
+     }
+    },
+    {
+     "t": 2.831,
+     "seq": 6,
+     "state": "S3",
+     "status": "Lens → Heard",
+     "body": "",
+     "foot": "",
+     "page": {
+      "cur": 1,
+      "total": 1
+     }
+    },
+    {
+     "t": 3.172,
+     "seq": 7,
+     "state": "S3",
+     "status": "Lens → Heard",
+     "body": "How do I get to Golden Gate Park from downtown?",
+     "foot": "",
+     "page": {
+      "cur": 1,
+      "total": 1
+     }
+    },
+    {
+     "t": 4.373,
+     "seq": 8,
+     "state": "S4",
+     "status": "Lens ◐ Thinking 0s",
+     "body": "How do I get to Golden Gate Park from downtown?",
+     "foot": "",
+     "page": {
+      "cur": 1,
+      "total": 1
+     }
+    },
+    {
+     "t": 5.375,
+     "seq": 9,
+     "state": "S4",
+     "status": "Lens ◐ Thinking 1s",
+     "body": "How do I get to Golden Gate Park from downtown?",
+     "foot": "",
+     "page": {
+      "cur": 1,
+      "total": 1
+     }
+    },
+    {
+     "t": 5.938,
+     "seq": 10,
+     "state": "S6",
+     "status": "Lens ▶ Answer",
+     "body": "Take",
+     "foot": "",
+     "page": {
+      "cur": 1,
+      "total": 1
+     }
+    },
+    {
+     "t": 5.945,
+     "seq": 49,
+     "state": "S7",
+     "status": "Lens √ Done",
+     "body": "Take the N Judah streetcar from downtown toward Ocean Beach \nand get off at any stop from 9th Avenue to 30th Avenue. The ride\n takes about 20 to 30 minutes.",
+     "foot": "",
+     "page": {
+      "cur": 1,
+      "total": 1
+     }
+    }
+   ]
+  },
+  {
+   "id": "park",
+   "clip": "en-park.wav",
+   "blurb": "A long answer that paginates: the footer shows 1/2 and the page can be turned.",
+   "transcript": "What are the top five things to see in Golden Gate Park?",
+   "audioSeconds": 2.94,
+   "turnSeconds": 8.6,
+   "frames": [
+    {
+     "t": 0.001,
+     "seq": 2,
+     "state": "S2",
+     "status": "Lens ● Listening 0:00",
+     "body": "",
+     "foot": "",
+     "page": {
+      "cur": 1,
+      "total": 1
+     }
+    },
+    {
+     "t": 0.834,
+     "seq": 3,
+     "state": "S2",
+     "status": "Lens ● Listening 0:00",
+     "body": "What are the top?▌",
+     "foot": "",
+     "page": {
+      "cur": 1,
+      "total": 1
+     }
+    },
+    {
+     "t": 1.679,
+     "seq": 4,
+     "state": "S2",
+     "status": "Lens ● Listening 0:01",
+     "body": "What are the top five things to see?▌",
+     "foot": "",
+     "page": {
+      "cur": 1,
+      "total": 1
+     }
+    },
+    {
+     "t": 2.538,
+     "seq": 5,
+     "state": "S2",
+     "status": "Lens ● Listening 0:02",
+     "body": "What are the top five things to see in Golden Gate?▌",
+     "foot": "",
+     "page": {
+      "cur": 1,
+      "total": 1
+     }
+    },
+    {
+     "t": 3.034,
+     "seq": 6,
+     "state": "S3",
+     "status": "Lens → Heard",
+     "body": "",
+     "foot": "",
+     "page": {
+      "cur": 1,
+      "total": 1
+     }
+    },
+    {
+     "t": 3.387,
+     "seq": 7,
+     "state": "S3",
+     "status": "Lens → Heard",
+     "body": "What are the top five things to see in Golden Gate Park?",
+     "foot": "",
+     "page": {
+      "cur": 1,
+      "total": 1
+     }
+    },
+    {
+     "t": 4.588,
+     "seq": 8,
+     "state": "S4",
+     "status": "Lens ◐ Thinking 0s",
+     "body": "What are the top five things to see in Golden Gate Park?",
+     "foot": "",
+     "page": {
+      "cur": 1,
+      "total": 1
+     }
+    },
+    {
+     "t": 5.589,
+     "seq": 9,
+     "state": "S4",
+     "status": "Lens ◐ Thinking 1s",
+     "body": "What are the top five things to see in Golden Gate Park?",
+     "foot": "",
+     "page": {
+      "cur": 1,
+      "total": 1
+     }
+    },
+    {
+     "t": 5.625,
+     "seq": 10,
+     "state": "S6",
+     "status": "Lens ▶ Answer",
+     "body": "The",
+     "foot": "",
+     "page": {
+      "cur": 1,
+      "total": 1
+     }
+    },
+    {
+     "t": 6.126,
+     "seq": 21,
+     "state": "S6",
+     "status": "Lens ▶ Answer",
+     "body": "The top five are the de Young Museum, the California Academy",
+     "foot": "",
+     "page": {
+      "cur": 1,
+      "total": 1
+     }
+    },
+    {
+     "t": 6.627,
+     "seq": 56,
+     "state": "S6",
+     "status": "Lens ▶ Answer",
+     "body": "The top five are the de Young Museum, the California Academy of\n Sciences, the Japanese Tea Garden, Stow Lake, and the \nConservatory of Flowers.\n\nThe de Young has American and international art, plus a tower \nwith free city",
+     "foot": "",
+     "page": {
+      "cur": 1,
+      "total": 1
+     }
+    },
+    {
+     "t": 8.591,
+     "seq": 57,
+     "state": "S7",
+     "status": "Lens √ Done",
+     "body": "The top five are the de Young Museum, the California Academy of\n Sciences, the Japanese Tea Garden, Stow Lake, and the \nConservatory of Flowers.\n\nThe de Young has American and international art, plus a tower \nwith free city… (cut off)",
+     "foot": "",
+     "page": {
+      "cur": 1,
+      "total": 1
+     }
+    }
+   ]
+  },
+  {
+   "id": "remind",
+   "clip": "en-remind.wav",
+   "blurb": "Write capability: it really schedules a reminder, which puts itself on screen 20 seconds later, long after the turn ended.",
+   "transcript": "Remind me in 20 seconds to check the oven.",
+   "audioSeconds": 2.46,
+   "turnSeconds": 6.6,
+   "frames": [
+    {
+     "t": 0.0,
+     "seq": 2,
+     "state": "S2",
+     "status": "Lens ● Listening 0:00",
+     "body": "",
+     "foot": "",
+     "page": {
+      "cur": 1,
+      "total": 1
+     }
+    },
+    {
+     "t": 0.842,
+     "seq": 3,
+     "state": "S2",
+     "status": "Lens ● Listening 0:00",
+     "body": "Remind me in...▌",
+     "foot": "",
+     "page": {
+      "cur": 1,
+      "total": 1
+     }
+    },
+    {
+     "t": 1.684,
+     "seq": 4,
+     "state": "S2",
+     "status": "Lens ● Listening 0:01",
+     "body": "Remind me in 20 seconds.▌",
+     "foot": "",
+     "page": {
+      "cur": 1,
+      "total": 1
+     }
+    },
+    {
+     "t": 2.529,
+     "seq": 5,
+     "state": "S3",
+     "status": "Lens → Heard",
+     "body": "",
+     "foot": "",
+     "page": {
+      "cur": 1,
+      "total": 1
+     }
+    },
+    {
+     "t": 2.878,
+     "seq": 6,
+     "state": "S3",
+     "status": "Lens → Heard",
+     "body": "Remind me in 20 seconds to check the oven.",
+     "foot": "",
+     "page": {
+      "cur": 1,
+      "total": 1
+     }
+    },
+    {
+     "t": 4.079,
+     "seq": 7,
+     "state": "S4",
+     "status": "Lens ◐ Thinking 0s",
+     "body": "Remind me in 20 seconds to check the oven.",
+     "foot": "",
+     "page": {
+      "cur": 1,
+      "total": 1
+     }
+    },
+    {
+     "t": 5.081,
+     "seq": 8,
+     "state": "S4",
+     "status": "Lens ◐ Thinking 1s",
+     "body": "Remind me in 20 seconds to check the oven.",
+     "foot": "",
+     "page": {
+      "cur": 1,
+      "total": 1
+     }
+    },
+    {
+     "t": 5.51,
+     "seq": 9,
+     "state": "S5",
+     "status": "Lens ◆ Remind",
+     "body": "Remind me in 20 seconds to check the oven.",
+     "foot": "",
+     "page": {
+      "cur": 1,
+      "total": 1
+     }
+    },
+    {
+     "t": 6.402,
+     "seq": 10,
+     "state": "S6",
+     "status": "Lens ▶ Answer",
+     "body": "Rem",
+     "foot": "",
+     "page": {
+      "cur": 1,
+      "total": 1
+     }
+    },
+    {
+     "t": 6.574,
+     "seq": 22,
+     "state": "S7",
+     "status": "Lens √ Done",
+     "body": "Reminder set for 20 seconds to check the oven.",
+     "foot": "",
+     "page": {
+      "cur": 1,
+      "total": 1
+     }
+    },
+    {
+     "t": 21.575,
+     "seq": 23,
+     "state": "S0",
+     "status": "·",
+     "body": "",
+     "foot": "",
+     "page": {
+      "cur": 1,
+      "total": 1
+     }
+    },
+    {
+     "t": 25.509,
+     "seq": 24,
+     "state": "S9",
+     "status": "Lens ◆ Reminder",
+     "body": "Check the oven",
+     "foot": "",
+     "page": {
+      "cur": 1,
+      "total": 1
+     }
+    }
+   ]
+  }
+ ]
+}

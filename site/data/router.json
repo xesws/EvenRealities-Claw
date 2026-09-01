@@ -1,0 +1,76 @@
+{
+ "captured": {
+  "at": "2026-08-31T23:45:21-0700",
+  "commit": "ccfcbc0",
+  "source": "gateway/lens_agent/skills.py :: route()"
+ },
+ "rules": [
+  {
+   "skill": "remind",
+   "pattern": "(提醒我|\\b(remind|wake) me\\b|((\\d+|半|一刻|几)\\s*(分钟|分|小时|钟头|秒)(之?后|以后)?|(明天|明早|明晨|明晚|今晚|今天|下午|上午|早上|早晨|中午|傍晚|晚上|夜里)[^，。,.]{0,4}([零一二三四五六七八九十两]{1,3}|\\d{1,2})\\s*点|([零一二三四五六七八九十两]{1,3}|\\d{1,2})\\s*点(半|[一二三四五六七八九十]{1,3}刻|\\d{1,2}\\s*分)?|\\b(in|after)\\s+\\d+\\s*(min|minute|hour|hr|sec|second)|\\b(at|by)\\s+\\d{1,2}([:.]\\d{2})?\\s*(am|pm|o.?clock)?\\b|\\b\\d{1,2}[:.]\\d{2}\\s*(am|pm)?\\b|\\b\\d{1,2}\\s*(am|pm)\\b|\\b(noon|midnight)\\b)[^，。,.]{0,10}(再|叫|提醒|喊|告诉|wake|remind|tell|ping)|(叫|喊)我[^，。,.]{0,14}((\\d+|半|一刻|几)\\s*(分钟|分|小时|钟头|秒)(之?后|以后)?|(明天|明早|明晨|明晚|今晚|今天|下午|上午|早上|早晨|中午|傍晚|晚上|夜里)[^，。,.]{0,4}([零一二三四五六七八九十两]{1,3}|\\d{1,2})\\s*点|([零一二三四五六七八九十两]{1,3}|\\d{1,2})\\s*点(半|[一二三四五六七八九十]{1,3}刻|\\d{1,2}\\s*分)?|\\b(in|after)\\s+\\d+\\s*(min|minute|hour|hr|sec|second)|\\b(at|by)\\s+\\d{1,2}([:.]\\d{2})?\\s*(am|pm|o.?clock)?\\b|\\b\\d{1,2}[:.]\\d{2}\\s*(am|pm)?\\b|\\b\\d{1,2}\\s*(am|pm)\\b|\\b(noon|midnight)\\b)|\\b(tell|ping)\\s+me\\b.{0,30}((\\d+|半|一刻|几)\\s*(分钟|分|小时|钟头|秒)(之?后|以后)?|(明天|明早|明晨|明晚|今晚|今天|下午|上午|早上|早晨|中午|傍晚|晚上|夜里)[^，。,.]{0,4}([零一二三四五六七八九十两]{1,3}|\\d{1,2})\\s*点|([零一二三四五六七八九十两]{1,3}|\\d{1,2})\\s*点(半|[一二三四五六七八九十]{1,3}刻|\\d{1,2}\\s*分)?|\\b(in|after)\\s+\\d+\\s*(min|minute|hour|hr|sec|second)|\\b(at|by)\\s+\\d{1,2}([:.]\\d{2})?\\s*(am|pm|o.?clock)?\\b|\\b\\d{1,2}[:.]\\d{2}\\s*(am|pm)?\\b|\\b\\d{1,2}\\s*(am|pm)\\b|\\b(noon|midnight)\\b)|(定|设)(个|一个)?(闹钟|定时器|计时器)|倒计时|(有|还有)(什么|哪些)?提醒|\\bset (a |an )?(timer|alarm|reminder)\\b|\\bcountdown\\b|what (reminders|timers)|取消|\\bcancel\\b)",
+   "flags": "i",
+   "tools": [
+    "remind_set",
+    "remind_list",
+    "remind_cancel",
+    "list_add"
+   ],
+   "budgetMs": 8000
+  },
+  {
+   "skill": "list",
+   "pattern": "(记一下|记下|帮我记|加到.{0,6}(清单|单子|列表)|购物清单|待办|清单上|清单里|买什么|别忘了|删掉|买到了|\\b(shopping|grocery|to-?do)\\b|\\bmy list\\b|\\bthe list\\b|add .{0,20}\\b(to|onto)\\b .{0,12}\\blist\\b|(remember|note|jot) (that|this|down|to)|what.{0,12}\\bon (my|the) .{0,12}list\\b|(remove|delete|cross off|take) .{0,24}\\b(list|off)\\b)",
+   "flags": "i",
+   "tools": [
+    "list_show",
+    "list_add",
+    "list_remove"
+   ],
+   "budgetMs": 8000
+  },
+  {
+   "skill": "device",
+   "pattern": "((眼镜|镜腿|设备).{0,6}(电量|电池|还有多少电|多少电|没电|充.{0,2}电)|(电量|电池).{0,4}(多少|还有|剩)|戴着|佩戴|摘下来|\\b(glasses|device|specs)\\b.{0,20}\\b(battery|charge|charging|power|worn|wearing)\\b|\\bbattery\\b.{0,20}\\b(glasses|device|left)\\b|how much (battery|charge)|\\b(am i|are they) wearing\\b)",
+   "flags": "i",
+   "tools": [
+    "device"
+   ],
+   "budgetMs": 6000
+  },
+  {
+   "skill": "weather",
+   "pattern": "(天气|气温|温度|下雨|降雨|冷不冷|热不热|穿什么|带伞|weather|temperat|forecast|\\brain\\b|raining|umbrella|how (cold|hot|warm)|what.{0,10}wear|\\bjacket\\b|\\bcoat\\b)",
+   "flags": "i",
+   "tools": [
+    "weather"
+   ],
+   "budgetMs": 9000
+  },
+  {
+   "skill": "math",
+   "pattern": "(小费|打.{0,3}折|折后|分摊|平摊|人均多少|换算|多少摄氏|多少华氏|汇率|兑换|[换兑折].{0,6}(美元|欧元|日元|英镑|人民币|港币|韩元|瑞郎)|(美元|欧元|日元|英镑|人民币|港币|韩元|瑞郎).{0,6}[换兑]|(美元|欧元|日元|英镑|人民币|港币|韩元|瑞郎).{0,12}(美元|欧元|日元|英镑|人民币|港币|韩元|瑞郎)|\\btip\\b|\\bdiscount\\b|split the (bill|check)|\\bper person\\b|\\bconvert\\b|\\bhow much is\\b.{0,20}\\bin\\b|exchange rate|\\bin (usd|eur|jpy|gbp|cny|dollars|euros|yen|pounds)\\b|fahrenheit|celsius|\\bmiles?\\b.{0,12}\\bkm\\b|\\bkm\\b.{0,12}\\bmiles?\\b|what.{0,4}s \\d|\\d+\\s*[-+*/x×÷]\\s*\\d|\\d+\\s*%\\s*(of|off))",
+   "flags": "i",
+   "tools": [
+    "calc",
+    "currency"
+   ],
+   "budgetMs": 9000
+  },
+  {
+   "skill": "daily",
+   "pattern": "(现在几点|几点了|今天.{0,2}(几号|星期|周几|日期)|明天|昨天|后天|星期几|周几|日期|时间|几号|还有(多少|几)天|距离.{0,10}(还有|多久)|多久以后|过多久|what.{0,10}\\btime\\b|what.{0,10}\\b(day|date)\\b|today.{0,3}date|\\btime is it\\b|\\bwhat day\\b|how (many days|long) (until|till|to go)|days? until|how old|what year)",
+   "flags": "i",
+   "tools": [
+    "now",
+    "days_until",
+    "calc"
+   ],
+   "budgetMs": 8000
+  }
+ ],
+ "default": {
+  "skill": "ask",
+  "tools": [],
+  "budgetMs": 4000
+ }
+}
