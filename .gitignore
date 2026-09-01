@@ -35,3 +35,7 @@ models/
 .idea/
 .DS_Store
 *.log
+
+# 部署参数（含公网地址，不入库）
+DEPLOYMENT.local.md
+*.local.md

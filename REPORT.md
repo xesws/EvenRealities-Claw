@@ -2,7 +2,11 @@
 
 > 2026-08-31 · v0.7.0
 > 仓库：https://github.com/xesws/EvenRealities-Claw （本文件 = 仓库根目录 `REPORT.md`）
-> 服务器：EC2 `i-0774fa15e542c6f1d`，公网 IP `35.169.46.183`，服务端口 `8443`
+> 服务器：AWS EC2，服务端口 `8443`
+>
+> 本文档里的 `<SERVER_IP>` 与 `<EC2_INSTANCE_ID>` 是占位符 —— 仓库是公开的，
+> 把运行中主机的公网地址和实例 ID 写进去等于对外发布攻击面。真实值在部署机上的
+> `DEPLOYMENT.local.md`（`.gitignore` 已排除），照着替换即可。
 
 ## TL;DR
 
@@ -30,7 +34,7 @@
 
 **你拿到眼镜后要做的全部事情（共 ~10 分钟）：**
 1. AWS 控制台放行 8443 端口（→ 第 5.1 节）
-2. `npx @evenrealities/evenhub-cli qr --url http://35.169.46.183:8443/plugin/` 生成二维码，Even App 扫码（→ 第 5.2 节）
+2. `npx @evenrealities/evenhub-cli qr --url http://<SERVER_IP>:8443/plugin/` 生成二维码，Even App 扫码（→ 第 5.2 节）
 3. 服务器跑一条命令拿 6 位配对码，手机输入（→ 第 5.3 节）
 
 之后：手机亮屏开插件 → 按住说话 → 抬眼看眼镜。没有眼镜时也可以先用浏览器模拟器体验（→ 第 5.6 节）。
@@ -59,7 +63,7 @@
 
 ```
 ┌─────────┐ BLE(官方桥) ┌────────────────────┐  WS:8443   ┌──────────────────────────────────┐
-│ G2 眼镜  │◀──────────▶│ 手机 Even App       │◀──────────▶│ EC2 服务器 (35.169.46.183)        │
+│ G2 眼镜  │◀──────────▶│ 手机 Even App       │◀──────────▶│ EC2 服务器 (<SERVER_IP>)          │
 │ mic/HUD │             │  └ OpenClaw Lens    │  设备 JWT   │  lens-gateway (systemd 用户服务)   │
 └─────────┘             │    插件(WebView)     │            │   ├ /ws       插件接入             │
      ↑ 单击翻页/双击退出  │    按住说话+预览屏    │            │   ├ /plugin/  托管插件本体          │
@@ -358,9 +362,9 @@ version / model / endpoint / production）。`demo/fake_openclaw.py` 会**自报
 
 服务已在 8443 监听，但 AWS 安全组未放行：
 
-1. AWS 控制台 → EC2 → 实例 **`i-0774fa15e542c6f1d`** → 「安全」标签 → 点安全组 → **编辑入站规则** → 添加规则：
+1. AWS 控制台 → EC2 → 实例 **`<EC2_INSTANCE_ID>`** → 「安全」标签 → 点安全组 → **编辑入站规则** → 添加规则：
    - 类型 `自定义 TCP`，端口 `8443`，来源 `0.0.0.0/0`（最简单；想更稳妥就填手机运营商网段）
-2. **验证**：手机浏览器打开 `http://35.169.46.183:8443/healthz`
+2. **验证**：手机浏览器打开 `http://<SERVER_IP>:8443/healthz`
    - 期望看到：`{"ok": true, "asr_ready": true, "openclaw": true, ...}`
    - `asr_ready: false` 说明服务刚重启还在热身，等 1 分钟刷新。
 
@@ -372,7 +376,7 @@ version / model / endpoint / production）。`demo/fake_openclaw.py` 会**自报
 
 1. 在任何装了 Node.js 的电脑上（或 SSH 到服务器上）执行：
    ```bash
-   npx @evenrealities/evenhub-cli qr --url http://35.169.46.183:8443/plugin/
+   npx @evenrealities/evenhub-cli qr --url http://<SERVER_IP>:8443/plugin/
    ```
    终端会打印一个二维码（加 `--external` 可生成图片文件）；
 2. 手机打开 **Even Realities App** → 找到扫码/开发者入口 → 扫这个码；
@@ -418,7 +422,7 @@ version / model / endpoint / production）。`demo/fake_openclaw.py` 会**自报
 
 安全组放行后，电脑 Chrome 打开：
 ```
-http://35.169.46.183:8443/plugin/harness/harness.html
+http://<SERVER_IP>:8443/plugin/harness/harness.html
 ```
 允许麦克风 → 页面里有块"假眼镜屏" → 走 5.3 配对 → 按住说话。与真机代码路径完全一致，
 还能模拟镜腿点击和断网。
@@ -502,7 +506,7 @@ $VENV -m lens_gateway.main revoke dev_xxx  # 吊销某台手机（怀疑凭证�
 
 ### 6.4 升级 TLS（有域名后）
 
-1. 域名 A 记录 → `35.169.46.183`；
+1. 域名 A 记录 → `<SERVER_IP>`；
 2. 装 caddy，Caddyfile 两行：`你的域名 { reverse_proxy 127.0.0.1:8443 }`（自动 Let's Encrypt）；
 3. 安全组放行 443，扫码 URL 换 `https://你的域名/plugin/`。插件地址自动推导会跟着用 `wss://`。
 
