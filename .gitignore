@@ -31,6 +31,10 @@ venv/
 *.mp3
 # 例外：e2e 合成测试语音（edge-tts 生成，非真人录音）
 !gateway/tests/fixtures/*.mp3
+# 同上：ASR 质量数据集（10 条 edge-tts，164KB）。漏掉这一行的代价已经付过一次 ——
+# manifest.json 不是 mp3，它进了仓库，于是 CI 照样收集 test_asr_quality.py，
+# 再对着不存在的音频 av.open 报 FileNotFoundError。CI 红了五次 push 没人发现。
+!gateway/tests/data/asr/*.mp3
 audio_cache/
 models/
 
