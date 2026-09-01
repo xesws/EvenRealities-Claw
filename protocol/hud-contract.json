@@ -121,8 +121,14 @@
     "battery_low": "⚡ U+26A1（Misc Symbols 只支持 U+2605–2667，它在其外）"
   },
   "hudText": {
-    "_note": "插件自己写死的、会直接下发到眼镜的文案。集中在这里是为了能被字形测试统一扫描。{glyph} 会被替换成对应档位的字形。",
-    "booting": "{disconnected} 等待连接…",
-    "linkLost": "{disconnected} 连接丢失·重连中"
+    "_note": "插件自己写死的、会直接下发到眼镜的文案（建页时就写进 status 容器）。集中在这里是为了能被字形测试统一扫描——测试扫的是**所有语言**，不是当前选中的那个，否则切了 locale 就会漏扫。{glyph} 会被替换成对应档位的字形。",
+    "zh": {
+      "booting": "{disconnected} 等待连接…",
+      "linkLost": "{disconnected} 连接丢失·重连中"
+    },
+    "en": {
+      "booting": "{disconnected} Waiting for gateway…",
+      "linkLost": "{disconnected} Connection lost, reconnecting…"
+    }
   }
 }

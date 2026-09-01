@@ -157,14 +157,31 @@ class AgentProvider(Protocol):
   "params": {
     "sessionKey": "lens:dev_a1b2c3",
     "message": "帮我记一下：周四要交报销单",
-    "skill": "capture",          // 由网关或 agent 侧路由决定，见 §9.1
-    "budgetMs": 8000             // 本轮总延迟预算，超时即降级收尾
+    "budgetMs": 8000,            // 本轮总延迟预算，超时即降级收尾
+    // 可选。眼镜此刻的遥测快照，`device` 工具的唯一数据源。
+    // 未知字段两端都忽略 ⇒ 这是**加法安全**的：老网关不发，agent 收到 None，
+    // 行为与从前完全一致。
+    "deviceState": {
+      "battery": 41, "worn": true, "charging": false,
+      "age_ms": 1200, "stale": false, "source": "push"
+    }
   } }
 
 // C→S 打断
 { "type": "req", "id": "e5f6", "method": "chat.abort",
   "params": { "sessionKey": "lens:dev_a1b2c3" } }
 ```
+
+**`deviceState` 为什么随请求走，而不是开一条反向 RPC。**
+眼镜的电量/佩戴状态本来就在网关的遥测缓存里（M4），而 agent 完全看不见 ——
+实测问它「我眼镜还有多少电」，它编了个 82%。让 agent 反过来查网关需要
+新方向的 RPC、新的鉴权、以及一份「什么时候查」的策略；而这一轮真正需要的
+就那么几个字段，随请求带过去即可：没有新连接、没有新方向、没有轮询。
+代价是它只在有人说话的那一刻是新鲜的 —— 对一副眼镜来说，这正好够用。
+
+agent 侧用 `ContextVar` 承接（`tools.DEVICE_STATE`）而不是模块级全局：
+一个 agent 进程服多副眼镜，每轮 `chat.send` 跑在自己的 task 里，
+全局变量会让 A 的电量串到 B 的回答里。
 
 ### 5.2 事件流
 
@@ -393,13 +410,43 @@ class Capability(str, Enum):
 | 工具 | 能力 | 预算 | 状态 | 说明 |
 |---|---|---|---|---|
 | `now` | READ | 50ms | **已实现** | 本地时间/日期/星期 |
+| `days_until` | READ | 50ms | **已实现** | 到某日还有几天；只给月日按「下一次」算 |
+| `device` | READ | 50ms | **已实现** | 眼镜自身：电量/充电/佩戴。数据来自网关遥测 |
 | `weather` | READ | 2000ms | **已实现** | Open-Meteo，仅传城市名 |
-| `notes_search` | READ | 800ms | 未实现 | 检索配置目录下的笔记，只读 |
-| `note_append` | WRITE | 200ms | 未实现 | 追加到**单个**固定文件 |
-| `todo_add` | WRITE | 200ms | 未实现 | 追加到**单个**固定文件 |
-| `todo_list` | READ | 200ms | 未实现 | 读那一个文件 |
+| `calc` | READ | 50ms | **已实现** | AST 白名单求值，**不是 eval** |
+| `currency` | READ | 2000ms | **已实现** | 欧洲央行参考汇率，仅传币种与金额 |
+| `list_show` | READ | 100ms | **已实现** | 读清单 |
+| `list_add` | WRITE | 200ms | **已实现** | 追加到**单个**固定文件 |
+| `list_remove` | WRITE | 200ms | **已实现** | 从那一个文件里删 |
 
 明确不做：shell、文件读写、发消息/邮件、浏览器、代码执行、日历写入。
+
+#### 为什么工具表长成这样：一次「假装自己什么都能做」的实测
+
+第一版只有 `now` 和 `weather`。拿 15 个日常问题跑一遍（`demo/chat.py -f`），
+结果不是「工具太少」，而是**没有工具时它会假装有**：
+
+| 问 | 答 | 真相 |
+|---|---|---|
+| Set a timer for 10 minutes | "Timer set for 10 minutes." | 没有定时器工具 |
+| Add milk and eggs to my shopping list | "Milk and eggs are now on your shopping list." | 没有清单工具 |
+| What's on my calendar today? | 编了一整天日程（客户电话、Q3 roadmap review） | 没有日历工具 |
+| Who won the game last night? | "Lakers beat Celtics 112-108, LeBron 34 分" | 编造比赛 |
+| How much battery do my glasses have? | "82 percent" | **遥测就在网关里，agent 拿不到** |
+| How many days until Christmas? | 两次跑给出 48 天 / 116 天 | 正确是 116；同一问不同答 |
+
+对照组：问心率，它老实说看不到。所以模型不是不会拒绝 ——
+**是没人告诉它边界在哪**：小屏契约当时 6 条规则全是排版，没有一条讲能力。
+
+于是做了两件事，顺序不能反：
+
+1. **契约加了第 1 条**（`skills.py` 的 `CONTRACT_ZH/EN`）：没有对应工具的动作直接说做不到，
+   没有对应工具的实时事实直接说不知道，绝不能说「已经帮你办好了」。
+   这一条修掉了上表里除日历外的**全部**编造。
+2. **补工具**，优先补「系统里已经有数据、agent 却拿不到」的那些（`device` 就是白送的）。
+
+数字类问题单靠契约修不掉 —— 模型说「我算一下」然后算错，它并不认为自己在编。
+所以 `calc` / `days_until` 是必须的，且 skill 的系统提示里写死「不要心算」。
 
 #### `weather` 的预算是怎么定到 2000ms 的
 
@@ -442,21 +489,42 @@ class Skill:
 | skill | 工具 | 预算 | 写能力 | 状态 |
 |---|---|---|---|---|
 | `ask` | 无 | 4000ms | 无 | **已实现** |
-| `daily` | `now` | 6000ms | 无 | **已实现** |
+| `daily` | `now` `days_until` `calc` | 8000ms | 无 | **已实现** |
 | `weather` | `weather` | 9000ms | 无 | **已实现** |
-| `capture` | `note_append` `todo_add` | 5000ms | **有** | 未实现 |
+| `math` | `calc` `currency` | 9000ms | 无 | **已实现** |
+| `list` | `list_show` `list_add` `list_remove` | 6000ms | **有** | **已实现** |
+| `device` | `device` | 6000ms | 无 | **已实现** |
 
-`weather` 从 `daily` 里独立出来了：它是唯一一个要走公网的 skill，
-预算（9000ms）比纯本地的 `daily`（6000ms）宽，把两者混在一个 skill 里
-等于让「现在几点」也背上外网往返的预算。路由上 `weather` 的正则**先于**
-`daily` 匹配，否则「明天天气怎么样」会被 `daily` 抢走。
+路由顺序即优先级：`list` → `device` → `weather` → `math` → `daily` → `ask`。
+`list` 排第一是因为它是唯一会**真的改状态**的一档 —— 用户说「帮我记一下明天买牛奶」
+时那句话同时沾「明天」（daily），被 daily 抢走的后果是「模型嘴上说记住了、
+其实什么都没发生」，而用户会以为记住了。
+
+`weather` 从 `daily` 里独立出来了：它是唯一一个要走公网的 skill，把两者混在
+一个 skill 里等于让「现在几点」也背上外网往返的预算。
 
 `ask` 无工具是刻意的——它是最高频路径，跳过工具编排能拿到最低的首字延迟。
+代价是路由漏判时它只能心算；这是有意选择的方向：**漏判退回无工具档（更安全），
+而不是误升权限**。
+
+#### 预算是按「模型往返次数」定的，不是按工具耗时
+
+一次工具调用之后还要再问一次模型，所以 `now → calc → 组织回答` 就是**三次**
+`llm.complete`。实测 DeepSeek 单次首字延迟中位数 0.84s、长尾 3.5s，于是：
+
+- `MAX_TURNS` 从 3 提到 4 —— 3 时「离圣诞还有几天」稳定撞「工具轮次用尽」，
+  用户看到的是一句道歉而不是答案。真正的护栏是 deadline（按墙钟掐），
+  轮次上限只该防死循环。
+- `daily` 6000 → 8000ms，`math` 7000 → 9000ms。
+- 更重要的是**减少往返**：加 `days_until` 之后「离圣诞还有几天」从
+  now→calc→答（3 次）变成 days_until→答（2 次），2.17s 就答完了。
+  工具设计的目标不只是「能做到」，而是**常见问题一次调用就够**。
 
 ### 9.3 写操作必须回显
 
-`capture` 完成后，最终回复必须包含**实际写入的内容**，例如
-「已记下：周四交报销单」。用户在眼镜上一瞥就能发现记错了，
+`list` 档完成后，最终回复必须包含**实际写入的内容**，例如
+「已记下：周四交报销单」。工具的返回值本身就是这么写的
+（「已把「牛奶」加到清单「shopping」，现在共 2 条」），模型照着复述即可。用户在眼镜上一瞥就能发现记错了，
 然后用「打断」或重说来纠正。这是在无法事前确认的前提下，
 能提供的最好的事后可验证性。
 

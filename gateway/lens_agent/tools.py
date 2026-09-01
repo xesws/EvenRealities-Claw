@@ -9,9 +9,14 @@
 """
 from __future__ import annotations
 
+import ast
 import asyncio
+import contextvars
 import json
+import math
+import operator
 import os
+import pathlib
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -103,6 +108,134 @@ NOW = Tool(
     parameters={"type": "object", "properties": {}},
     handler=_now,
     label=_t("查时间", "Time"),
+)
+
+# ---------------------------------------------------------------- 眼镜自身状态
+
+#: 这一轮请求随身带来的眼镜遥测（电量、佩戴、连接）。
+#:
+#: 用 ContextVar 而不是模块级全局：agent 是一个进程服多副眼镜，每轮 `chat.send`
+#: 跑在自己的 asyncio task 里，全局变量会让 A 的电量串到 B 的回答里。
+#: ContextVar 在 task 之间天然隔离。
+DEVICE_STATE: contextvars.ContextVar[dict | None] = contextvars.ContextVar(
+    "device_state", default=None)
+
+
+def _pct(v: Any) -> str | None:
+    try:
+        n = int(v)
+    except (TypeError, ValueError):
+        return None
+    return f"{n}%" if 0 <= n <= 100 else None
+
+
+async def _device(_args: dict) -> str:
+    st = DEVICE_STATE.get()
+    if not st:
+        # **不能返回一个编出来的默认值。**没有数据就说没有 —— 这个工具存在的
+        # 全部意义就是把「我猜眼镜有 82% 电」换成「我确实读到了 41%」。
+        return _t("现在拿不到眼镜的状态（可能刚连上，还没上报过遥测）。"
+                  "如实告诉用户读不到，不要猜一个数。",
+                  "No device telemetry is available right now (the glasses may have "
+                  "just connected and not reported yet). Tell the user you cannot "
+                  "read it; do not guess a number.")
+    bits: list[str] = []
+    batt = _pct(st.get("battery"))
+    if batt:
+        bits.append(_t(f"电量 {batt}", f"battery {batt}"))
+    if st.get("charging"):
+        bits.append(_t("正在充电", "charging"))
+    worn = st.get("worn")
+    if worn is not None:
+        bits.append(_t("正在佩戴" if worn else "没有佩戴",
+                       "being worn" if worn else "not being worn"))
+    if not bits:
+        return _t("遥测里没有电量或佩戴信息。如实说读不到。",
+                  "The telemetry has no battery or wear information. Say you cannot read it.")
+    age_s = int((st.get("age_ms") or 0) / 1000)
+    freshness = (_t(f"这份读数是 {age_s} 秒前的", f"this reading is {age_s}s old")
+                 if age_s >= 5 else _t("刚刚读到的", "read just now"))
+    if st.get("stale"):
+        freshness += _t("，已经过期，只能当作最后已知值",
+                        ", and it is stale -- treat it as the last known value")
+    return _t(f"眼镜：{'，'.join(bits)}（{freshness}）。",
+              f"Glasses: {', '.join(bits)} ({freshness}).")
+
+
+DEVICE = Tool(
+    name="device",
+    description=_t("读眼镜自己的状态：电量、是否在充电、是否戴着。"
+                   "问到「我眼镜还有多少电」「充上电了吗」时用它，不要猜。",
+                   "Read the state of the glasses themselves: battery level, whether "
+                   "they are charging, whether they are being worn. Use it whenever "
+                   "the user asks about their glasses; never guess."),
+    capability=Capability.READ,
+    budget_ms=50,
+    parameters={"type": "object", "properties": {}},
+    handler=_device,
+    label=_t("眼镜", "Device"),
+)
+
+# ---------------------------------------------------------------- 日期差
+
+async def _days_until(args: dict) -> str:
+    """到某个日期还有几天。**一次调用就出答案** —— 这是它存在的全部理由。
+
+    没有它的时候，「离圣诞还有几天」要走 now（今天几号）→ calc（做减法）→ 组织回答
+    三次模型往返，稳定顶穿 6 秒预算；而模型还常常绕开 calc 自己逐月去数
+    （"September has 30, October has 31…"），数到一半被掐断。
+    """
+    raw = " ".join(str(args.get("date") or "").split())
+    if not raw:
+        return _t("没有给日期", "no date given")
+    today = datetime.now().date()
+    norm = raw.replace("/", "-")
+    parsed = None
+    try:
+        parsed = datetime.strptime(norm, "%Y-%m-%d").date()
+    except ValueError:
+        # 只给月日 ⇒ 按「下一次」算：8 月问圣诞是今年的，12 月 26 日问就是明年的。
+        # 拼上年份再解析，而不是解析后 `replace(year=...)` —— 后者对 2-29 会先
+        # 落到 1900 年（非闰年）直接报错，而且 Python 3.15 起无年份解析行为要变。
+        # 往后找几年而不是一两年：2-29 的下一次可能在三年后，
+        # 而「看不懂这个日期」对一个完全合法的日期是错的回答。
+        for year in range(today.year, today.year + 5):
+            try:
+                got = datetime.strptime(f"{year}-{norm}", "%Y-%m-%d").date()
+            except ValueError:
+                continue
+            if got >= today:
+                parsed = got
+                break
+    if parsed is None:
+        return _t(f"看不懂日期 {raw!r}，请给成 12-25 或 2026-12-25 这样的格式。",
+                  f"Could not read the date {raw!r}. Use 12-25 or 2026-12-25.")
+    days = (parsed - today).days
+    when = parsed.strftime("%A, %B %-d, %Y") if LOCALE == "en" else \
+        f"{parsed.year}年{parsed.month}月{parsed.day}日"
+    if days == 0:
+        return _t(f"{when} 就是今天。", f"{when} is today.")
+    if days < 0:
+        return _t(f"{when} 已经过去 {-days} 天了。", f"{when} was {-days} days ago.")
+    return _t(f"从今天（{today}）到 {when} 还有 {days} 天。",
+              f"{days} days from today ({today}) to {when}.")
+
+
+DAYS_UNTIL = Tool(
+    name="days_until",
+    description=_t("算今天到某个日期还有多少天。问到「离X还有几天」「还有多久到」时用它，"
+                   "不要自己数月份。只给月日（如 12-25）就按下一次那天算。",
+                   "How many days from today until a date. Use it for any question "
+                   "about how long until something; never count the months yourself. "
+                   "Give just month-day (e.g. 12-25) for the next occurrence."),
+    capability=Capability.READ,
+    budget_ms=50,
+    parameters={"type": "object", "properties": {
+        "date": {"type": "string",
+                 "description": "'12-25' for the next occurrence, or '2026-12-25'."}},
+        "required": ["date"]},
+    handler=_days_until,
+    label=_t("日期", "Date"),
 )
 
 # ---------------------------------------------------------------- 天气
@@ -256,7 +389,343 @@ WEATHER = Tool(
     label=_t("天气", "Weather"),
 )
 
-REGISTRY: dict[str, Tool] = {t.name: t for t in (NOW, WEATHER)}
+# ---------------------------------------------------------------- 算术
+
+#: 允许的运算符。**没有 eval** —— 模型给的是一串它自己拼的表达式，
+#: `eval` 会让一次提示注入直接变成任意代码执行，那是闸 1 明确排掉的那一档能力。
+_BINOPS = {
+    ast.Add: operator.add, ast.Sub: operator.sub, ast.Mult: operator.mul,
+    ast.Div: operator.truediv, ast.FloorDiv: operator.floordiv,
+    ast.Mod: operator.mod, ast.Pow: operator.pow,
+}
+_UNOPS = {ast.USub: operator.neg, ast.UAdd: operator.pos}
+_FUNCS = {"round": round, "abs": abs, "min": min, "max": max,
+          "sqrt": math.sqrt, "floor": math.floor, "ceil": math.ceil}
+
+#: 指数上限。`9**9**9` 在语法上完全合法，求值时会把进程挂住 —— 白名单挡不住
+#: 这种「合法但代价爆炸」的表达式，得单独限。
+_MAX_EXP = 64
+
+
+def _eval_node(node: ast.AST) -> float:
+    if isinstance(node, ast.Constant):
+        if isinstance(node.value, bool) or not isinstance(node.value, (int, float)):
+            raise ValueError("只支持数字")
+        return node.value
+    if isinstance(node, ast.BinOp):
+        op = _BINOPS.get(type(node.op))
+        if op is None:
+            raise ValueError("不支持的运算符")
+        left, right = _eval_node(node.left), _eval_node(node.right)
+        if op is operator.pow and (abs(right) > _MAX_EXP or abs(left) > 1e6):
+            raise ValueError("指数太大")
+        return op(left, right)
+    if isinstance(node, ast.UnaryOp):
+        op = _UNOPS.get(type(node.op))
+        if op is None:
+            raise ValueError("不支持的运算符")
+        return op(_eval_node(node.operand))
+    if isinstance(node, ast.Call):
+        if not isinstance(node.func, ast.Name) or node.func.id not in _FUNCS:
+            raise ValueError("不支持的函数")
+        if node.keywords:
+            raise ValueError("不支持关键字参数")
+        return _FUNCS[node.func.id](*(_eval_node(a) for a in node.args))
+    raise ValueError("表达式里有不允许的东西")
+
+
+async def _calc(args: dict) -> str:
+    expr = str(args.get("expression") or "").strip()
+    if not expr:
+        return _t("没有给表达式", "no expression given")
+    if len(expr) > 200:
+        return _t("表达式太长", "expression too long")
+    try:
+        tree = ast.parse(expr, mode="eval")
+        value = _eval_node(tree.body)
+    except ZeroDivisionError:
+        return _t("除以零", "division by zero")
+    except Exception as exc:
+        return _t(f"算不了这个表达式：{exc}", f"cannot evaluate that expression: {exc}")
+    if isinstance(value, float):
+        if value != value or value in (float("inf"), float("-inf")):
+            return _t("结果不是一个有限的数", "the result is not a finite number")
+        # 15 位有效数字之后是浮点噪音，报出去只会变成屏幕上的一串假精度
+        shown = f"{value:.10g}"
+    else:
+        shown = str(value)
+    return f"{expr} = {shown}"
+
+
+CALC = Tool(
+    name="calc",
+    description=_t(
+        "精确计算一个算术表达式。**任何算术都必须用它**，包括小费、折扣、分账、"
+        "单位换算（自己写成表达式，例如华氏转摄氏写 (350-32)*5/9）、天数差。"
+        "支持 + - * / // % ** 括号，以及 round/abs/min/max/sqrt/floor/ceil。",
+        "Evaluate an arithmetic expression exactly. **Use it for every "
+        "calculation**: tips, discounts, splitting a bill, unit conversion "
+        "(write it as an expression yourself, e.g. Fahrenheit to Celsius is "
+        "(350-32)*5/9), day counts. Supports + - * / // % ** parentheses and "
+        "round/abs/min/max/sqrt/floor/ceil."),
+    capability=Capability.READ,
+    budget_ms=50,
+    parameters={"type": "object", "properties": {
+        "expression": {"type": "string",
+                       "description": "e.g. '64 * 0.18' or 'round((350-32)*5/9)'"}},
+        "required": ["expression"]},
+    handler=_calc,
+    label=_t("算", "Math"),
+)
+
+# ---------------------------------------------------------------- 汇率
+
+#: 闸 1 的同一个形状：端点写死，模型只填 query 的值。
+#: 欧洲央行的公开参考汇率，无需 key、无需账号。
+_FX_URL = "https://api.frankfurter.dev/v1/latest"
+
+_CURRENCY_ALIASES = {
+    "dollar": "USD", "dollars": "USD", "usd": "USD", "美元": "USD", "美金": "USD",
+    "euro": "EUR", "euros": "EUR", "eur": "EUR", "欧元": "EUR",
+    "pound": "GBP", "pounds": "GBP", "gbp": "GBP", "英镑": "GBP",
+    "yen": "JPY", "jpy": "JPY", "日元": "JPY", "日圆": "JPY",
+    "yuan": "CNY", "rmb": "CNY", "cny": "CNY", "人民币": "CNY", "元": "CNY",
+    "won": "KRW", "krw": "KRW", "韩元": "KRW",
+    "franc": "CHF", "chf": "CHF", "瑞郎": "CHF", "瑞士法郎": "CHF",
+}
+
+
+def _code(raw: str) -> str:
+    """把模型可能给的各种写法归一成 ISO 代码。"""
+    v = (raw or "").strip()
+    return _CURRENCY_ALIASES.get(v.casefold(), v.upper())
+
+
+async def _currency(args: dict) -> str:
+    src, dst = _code(str(args.get("from_currency") or "")), _code(str(args.get("to_currency") or ""))
+    if len(src) != 3 or len(dst) != 3 or not src.isalpha() or not dst.isalpha():
+        return ("Give from_currency and to_currency as three-letter ISO codes, "
+                "e.g. USD, EUR, JPY.")
+    try:
+        amount = float(args.get("amount") or 1)
+    except (TypeError, ValueError):
+        amount = 1.0
+    if src == dst:
+        return f"{amount:g} {src} = {amount:g} {dst} (same currency)."
+    try:
+        async with _http().get(_FX_URL, params={
+                "base": src, "symbols": dst, "amount": amount}) as r:
+            data = await r.json()
+    except (asyncio.TimeoutError, OSError):
+        # 和天气工具同一条原则：让模型看见「查不到」，而不是拿着空结果自己编一个汇率
+        return ("The exchange rate lookup timed out. Tell the user it failed; "
+                "do not guess a rate.")
+    rate = (data.get("rates") or {}).get(dst)
+    if rate is None:
+        return (f"No rate for {src} to {dst}. The reference set covers major "
+                f"currencies only. Tell the user, do not guess.")
+    return (f"{amount:g} {src} = {rate:.4g} {dst} "
+            f"(European Central Bank reference rate, {data.get('date')}).")
+
+
+CURRENCY = Tool(
+    name="currency",
+    description=_t("按欧洲央行参考汇率换算货币。问到汇率、换钱、某个价格折成别的货币时用它。",
+                   "Convert money between currencies at the European Central Bank "
+                   "reference rate. Use it for any question about exchange rates or "
+                   "what a price is in another currency."),
+    capability=Capability.READ,
+    budget_ms=2000,
+    parameters={"type": "object", "properties": {
+        "from_currency": {"type": "string", "description": "ISO code, e.g. 'USD'"},
+        "to_currency": {"type": "string", "description": "ISO code, e.g. 'EUR'"},
+        "amount": {"type": "number", "description": "How much to convert. Default 1."}},
+        "required": ["from_currency", "to_currency"]},
+    handler=_currency,
+    label=_t("汇率", "Rate"),
+)
+
+# ---------------------------------------------------------------- 清单
+
+#: ★ 闸 3 的落点：**这是 agent 唯一被允许写的文件，路径写死在这里。**
+#:
+#: 模型能给的只有清单名和条目文本，它们进的是 JSON 的 key 和 value，
+#: 进不了路径。写工具拿不到"任意文件写"那一档能力 —— 能力枚举里没有那一档。
+LISTS_PATH = pathlib.Path(
+    os.environ.get("LENS_AGENT_LISTS", "~/.lens-agent/lists.json")).expanduser()
+
+#: 一条 12 个字以内、一屏放得下几十条。上限存在的理由是眼镜屏，不是磁盘。
+MAX_ITEM_CHARS = 80
+MAX_ITEMS = 50
+MAX_LISTS = 12
+
+
+def _list_key(raw: str) -> str:
+    """清单名归一。空名归到 default，这样「帮我记一下」不必先起名字。"""
+    v = " ".join(str(raw or "").split()).casefold()[:24]
+    return v or _t("默认", "list")
+
+
+def _load_lists() -> dict[str, list[str]]:
+    try:
+        data = json.loads(LISTS_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    return {str(k): [str(i) for i in v][:MAX_ITEMS]
+            for k, v in data.items() if isinstance(v, list)}
+
+
+def _save_lists(data: dict[str, list[str]]) -> None:
+    LISTS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    tmp = LISTS_PATH.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
+    tmp.replace(LISTS_PATH)          # 原子替换：断电也不会留下半个 JSON
+
+
+def _fmt_list(name: str, items: list[str]) -> str:
+    if not items:
+        return _t(f"清单「{name}」是空的。", f"The {name} list is empty.")
+    body = "; ".join(f"{i+1}. {it}" for i, it in enumerate(items))
+    return _t(f"清单「{name}」有 {len(items)} 条：{body}",
+              f"The {name} list has {len(items)} items: {body}")
+
+
+async def _list_show(args: dict) -> str:
+    data = _load_lists()
+    if not data:
+        return _t("一条清单都还没有。", "There are no lists yet.")
+    raw = str(args.get("list") or "").strip()
+    # 只有一条清单时，不管模型给的是什么名字都用它。
+    # 戴着眼镜的人说的是「我的清单上有啥」，不是「读 shopping 清单」——
+    # 名字对不上就回一句「没有这个清单」，在这个场景里等于坏了。
+    if len(data) == 1:
+        name, items = next(iter(data.items()))
+        return _fmt_list(name, items)
+    if not raw:
+        return _t("现有清单：" + "、".join(f"{k}（{len(v)} 条）" for k, v in data.items()),
+                  "Lists: " + ", ".join(f"{k} ({len(v)})" for k, v in data.items()))
+    name = _list_key(raw)
+    if name in data:
+        return _fmt_list(name, data[name])
+    return _t(f"没有叫「{name}」的清单。现有：" + "、".join(data),
+              f"There is no {name} list. Existing lists: " + ", ".join(data))
+
+
+async def _list_add(args: dict) -> str:
+    item = " ".join(str(args.get("item") or "").split())[:MAX_ITEM_CHARS]
+    if not item:
+        return _t("没有给要记的内容", "nothing to add")
+    name = _list_key(args.get("list"))
+    data = _load_lists()
+    if name not in data and len(data) >= MAX_LISTS:
+        return _t(f"清单数量已到上限（{MAX_LISTS}）。先删掉一条再加。",
+                  f"Too many lists (limit {MAX_LISTS}). Remove one first.")
+    items = data.setdefault(name, [])
+    if len(items) >= MAX_ITEMS:
+        return _t(f"清单「{name}」已经有 {MAX_ITEMS} 条了，放不下。",
+                  f"The {name} list already has {MAX_ITEMS} items.")
+    if any(i.casefold() == item.casefold() for i in items):
+        return _t(f"「{item}」已经在清单「{name}」上了，没有重复添加。",
+                  f"{item!r} is already on the {name} list; nothing was added.")
+    items.append(item)
+    _save_lists(data)
+    return _t(f"已把「{item}」加到清单「{name}」，现在共 {len(items)} 条。",
+              f"Added {item!r} to the {name} list. It now has {len(items)} items.")
+
+
+async def _list_remove(args: dict) -> str:
+    item = " ".join(str(args.get("item") or "").split())[:MAX_ITEM_CHARS]
+    if not item:
+        return _t("没有给要删的内容", "nothing to remove")
+    data = _load_lists()
+    if not data:
+        return _t("一条清单都还没有。", "There are no lists yet.")
+
+    # 先在模型指定的清单里找；找不到就在**所有**清单里找。
+    # 理由是实测出来的：用户说「牛奶买到了，划掉」时不会报清单名，模型于是
+    # 省略 list 参数、落到默认清单，而东西在 shopping 清单里 —— 结果是
+    # 「删成功了但其实什么都没删」。一副眼镜上的清单只有几十条，全局找一遍是对的。
+    def find(where: str) -> str | None:
+        return next((i for i in data.get(where, []) if i.casefold() == item.casefold()), None)
+
+    name = _list_key(args.get("list"))
+    hit = find(name)
+    if hit is None:
+        owners = [k for k in data if find(k) is not None]
+        if not owners:
+            return _t(f"哪个清单上都没有「{item}」。什么都没删。",
+                      f"{item!r} is not on any list. Nothing was removed.")
+        if len(owners) > 1:
+            return _t(f"「{item}」同时在这几个清单上：" + "、".join(owners) +
+                      "。问用户要删哪一个，先别删。",
+                      f"{item!r} is on several lists: " + ", ".join(owners) +
+                      ". Ask the user which one; do not remove it yet.")
+        name = owners[0]
+        hit = find(name)
+
+    data[name].remove(hit)
+    left = len(data[name])
+    if not data[name]:
+        data.pop(name, None)
+    _save_lists(data)
+    return _t(f"已从清单「{name}」删掉「{hit}」，还剩 {left} 条。",
+              f"Removed {hit!r} from the {name} list. {left} items left.")
+
+
+LIST_SHOW = Tool(
+    name="list_show",
+    description=_t("读出用户的清单（购物清单、待办等）。问到「清单上有什么」「我要买什么」时用它。",
+                   "Read back one of the user's lists (shopping, to-do, ...). Use it "
+                   "when they ask what is on a list."),
+    capability=Capability.READ,
+    budget_ms=100,
+    parameters={"type": "object", "properties": {
+        "list": {"type": "string",
+                 "description": "Which list, e.g. 'shopping'. Omit to show them all."}}},
+    handler=_list_show,
+    label=_t("清单", "List"),
+)
+
+LIST_ADD = Tool(
+    name="list_add",
+    description=_t("往清单里加一条。用户说「记一下」「加到购物清单」「提醒我买…」时用它。"
+                   "**必须真的调用它**，不能只是嘴上说记住了。",
+                   "Add one item to a list. Use it when the user says to remember "
+                   "something, or to add it to a shopping or to-do list. **You must "
+                   "actually call it** -- never just say you saved it."),
+    capability=Capability.WRITE,
+    budget_ms=200,
+    parameters={"type": "object", "properties": {
+        "item": {"type": "string", "description": "The item text, short."},
+        "list": {"type": "string",
+                 "description": "Which list, e.g. 'shopping'. Omit for the default."}},
+        "required": ["item"]},
+    handler=_list_add,
+    label=_t("记下", "Save"),
+    resources=(str(LISTS_PATH),),
+)
+
+LIST_REMOVE = Tool(
+    name="list_remove",
+    description=_t("从清单里删掉一条。用户说「买到了」「删掉」「做完了」时用它。",
+                   "Remove one item from a list. Use it when the user says they got "
+                   "it, finished it, or want it deleted."),
+    capability=Capability.WRITE,
+    budget_ms=200,
+    parameters={"type": "object", "properties": {
+        "item": {"type": "string", "description": "The item text to remove."},
+        "list": {"type": "string", "description": "Which list. Omit for the default."}},
+        "required": ["item"]},
+    handler=_list_remove,
+    label=_t("删掉", "Remove"),
+    resources=(str(LISTS_PATH),),
+)
+
+REGISTRY: dict[str, Tool] = {t.name: t for t in (
+    NOW, DAYS_UNTIL, DEVICE, WEATHER, CALC, CURRENCY,
+    LIST_SHOW, LIST_ADD, LIST_REMOVE)}
 
 
 class ToolError(RuntimeError):
@@ -277,9 +746,10 @@ async def invoke(name: str, call_id: str, arguments: str, *,
     try:
         args = json.loads(arguments) if arguments.strip() else {}
         if not isinstance(args, dict):
-            raise ValueError("参数必须是一个 JSON 对象")
+            raise ValueError(_t("参数必须是一个 JSON 对象", "arguments must be a JSON object"))
     except Exception as exc:
-        return ToolResult(call_id, name, f"参数解析失败：{exc}", False,
+        return ToolResult(call_id, name,
+                          _t(f"参数解析失败：{exc}", f"could not parse arguments: {exc}"), False,
                           int((time.monotonic() - started) * 1000))
 
     budget = tool.budget_ms / 1000
@@ -289,9 +759,11 @@ async def invoke(name: str, call_id: str, arguments: str, *,
         content = await asyncio.wait_for(tool.handler(args), timeout=budget)
         ok = True
     except asyncio.TimeoutError:
-        content, ok = f"{tool.name} 超时（预算 {tool.budget_ms}ms）", False
+        content, ok = _t(f"{tool.name} 超时（预算 {tool.budget_ms}ms）",
+                         f"{tool.name} timed out (budget {tool.budget_ms}ms)"), False
     except Exception as exc:                       # 工具坏了不该炸掉整轮对话
-        content, ok = f"{tool.name} 执行失败：{str(exc)[:120]}", False
+        content, ok = _t(f"{tool.name} 执行失败：{str(exc)[:120]}",
+                         f"{tool.name} failed: {str(exc)[:120]}"), False
     return ToolResult(call_id, name, content, ok,
                       int((time.monotonic() - started) * 1000))
 

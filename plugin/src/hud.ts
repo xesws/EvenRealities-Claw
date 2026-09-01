@@ -12,6 +12,7 @@
  */
 import contract from '../../protocol/hud-contract.json';
 import type { FrameContainers } from './types';
+import { lang } from './strings';
 
 export interface ContainerSpec {
   id: number;
@@ -55,15 +56,25 @@ function render(template: string): string {
 }
 
 /**
- * 插件自己写死、会直接下发到眼镜的文案。
- * 集中在这里的唯一目的：让字形测试能一次扫完所有会上屏的字符串。
+ * 插件自己写死、会直接下发到眼镜的文案 —— 网关还没连上时屏幕上的字只能由插件来写。
+ * 集中在契约里的唯一目的：让字形测试能一次扫完所有会上屏的字符串。
+ *
+ * `ALL_HUD_TEXT` 存在是因为**测试必须扫所有语言**：只扫当前选中的那个，
+ * 切了 locale 另一种语言就再也没被检查过，而字库外的字符在真机上什么都不画。
  */
-export const HUD_TEXT = {
-  /** 容器刚建好、还没连上网关时显示 */
-  booting: render(contract.hudText.booting),
-  /** 看门狗判定链路已死时直推 status 容器 */
-  linkLost: render(contract.hudText.linkLost),
+export const ALL_HUD_TEXT = {
+  zh: {
+    booting: render(contract.hudText.zh.booting),
+    linkLost: render(contract.hudText.zh.linkLost),
+  },
+  en: {
+    booting: render(contract.hudText.en.booting),
+    linkLost: render(contract.hudText.en.linkLost),
+  },
 } as const;
+
+/** 当前语言的那一份。运行时只用这个。 */
+export const HUD_TEXT: { readonly booting: string; readonly linkLost: string } = ALL_HUD_TEXT[lang];
 
 /** 空内容占位。protobuf 零值字段会被省略，空串到不了固件，用单空格做"清空"。 */
 export const BLANK = ' ';

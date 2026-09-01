@@ -577,3 +577,110 @@ class TestAuditCoversInterruptions:
         finally:
             slow.set()
             del tools.REGISTRY["hang"]
+
+
+class TestBudgetCeilingDoesNotClipSkills:
+    """网关的单轮预算是**上限**，不能把 skill 自己声明的预算压掉。
+
+    `lens_agent/loop.py` 取 `min(req.budget_ms, skill.budget_ms)`。所以网关默认值
+    一旦小于某个 skill 的预算，那个 skill 就永远拿不到自己声明的时间 ——
+    AGENT-LAYER §9.2 的预算表会静默失效。
+
+    这不是假想：weather skill 声明 9000ms，而网关默认曾经是 8000ms，
+    天气问答在模型稍慢时必然降级，屏幕上打出「预算耗尽」。**单测全绿，
+    是拿真语音跑演示时才看见的** —— 因为两个数字分别住在两个包里，
+    谁也没有义务认识对方。这条测试就是那个「义务」。
+    """
+
+    def _skills(self):
+        return [v for v in vars(skills).values() if isinstance(v, skills.Skill)]
+
+    def test_gateway_default_budget_covers_every_skill(self) -> None:
+        from lens_gateway.config import AgentConfig
+
+        ceiling = AgentConfig().budget_ms
+        for skill in self._skills():
+            assert skill.budget_ms <= ceiling, (
+                f"skill「{skill.name}」声明 {skill.budget_ms}ms，但网关默认预算只有 "
+                f"{ceiling}ms —— min() 会把它压到 {ceiling}ms，这个 skill 的预算是假的")
+
+    def test_the_clamp_is_what_makes_this_matter(self) -> None:
+        """把 min() 的语义钉住：预算低的一方说了算。
+
+        哪天有人把它改成 max()，上面那条测试就失去意义了，得有人喊一声。
+        """
+        import inspect
+
+        src = inspect.getsource(AgentLoop.run)
+        assert "min(req.budget_ms, skill.budget_ms)" in src, (
+            "预算的合成方式变了，请重新确认 test_gateway_default_budget_covers_every_skill "
+            "还成不成立")
+
+
+class TestEnglishModeLeaksNoChinese:
+    """英文模式下，**任何会上屏的字符串**都不许是中文。
+
+    这条测试是被现实逼出来的：英文演示拍到一半，屏幕上先后蹦出
+    「这个问题一时答不上来（预算耗尽）」和「…（未说完）」—— 两处都在降级路径上，
+    平时跑不到，于是一路躲过了 449 条单测和人的眼睛。
+
+    逐个去补是补不完的（下一个新工具、下一条错误分支又会漏），所以这里不点名，
+    直接把**整个模块的用户可见字符串**扫一遍。新增的漏网之鱼会自己撞上来。
+
+    在子进程里跑：`LOCALE` 是模块级常量，在本进程 reload 会污染其余用例。
+    """
+
+    SOURCE = r'''
+import json, re, sys
+sys.path.insert(0, ".")
+from lens_agent import loop, skills, tools
+
+CJK = re.compile(r"[一-鿿]")
+bad = []
+
+# 1) 降级路径上的常量与文案
+if CJK.search(loop.TRUNCATED_MARK):
+    bad.append(("loop.TRUNCATED_MARK", loop.TRUNCATED_MARK))
+
+# 2) 工具的元信息：label 会直接进状态条（S5「Lens ◆ Weather」）
+for name, t in tools.REGISTRY.items():
+    for field in ("label", "description"):
+        v = getattr(t, field, "") or ""
+        if CJK.search(v):
+            bad.append((f"tools.{name}.{field}", v))
+
+# 3) skill 的系统提示：它决定模型用哪种语言作答
+for s in (v for v in vars(skills).values() if isinstance(v, skills.Skill)):
+    if CJK.search(s.system_prompt):
+        bad.append((f"skills.{s.name}.system_prompt", s.system_prompt[:60]))
+
+print(json.dumps(bad, ensure_ascii=False))
+'''
+
+    def test_no_chinese_reaches_the_screen_in_english_mode(self) -> None:
+        import json
+        import os
+        import subprocess
+        import sys
+
+        env = {**os.environ, "LENS_AGENT_LOCALE": "en"}
+        out = subprocess.run([sys.executable, "-c", self.SOURCE], env=env,
+                             capture_output=True, text=True, timeout=60)
+        assert out.returncode == 0, out.stderr[-800:]
+        leaks = json.loads(out.stdout.strip().splitlines()[-1])
+        assert leaks == [], "英文模式下这些字符串仍是中文，会原样出现在眼镜屏上：\n" + \
+            "\n".join(f"  {k} = {v!r}" for k, v in leaks)
+
+    def test_the_scan_would_catch_a_leak(self) -> None:
+        """反向验证：中文模式下同一份扫描必须报出一堆 —— 否则扫描器本身是瞎的。"""
+        import json
+        import os
+        import subprocess
+        import sys
+
+        env = {**os.environ, "LENS_AGENT_LOCALE": "zh"}
+        out = subprocess.run([sys.executable, "-c", self.SOURCE], env=env,
+                             capture_output=True, text=True, timeout=60)
+        assert out.returncode == 0, out.stderr[-800:]
+        leaks = json.loads(out.stdout.strip().splitlines()[-1])
+        assert leaks, "中文模式下一条都没扫出来，说明这个扫描器根本没在看东西"

@@ -9,6 +9,8 @@
 from __future__ import annotations
 
 import asyncio
+import pathlib
+import re
 import time
 
 import pytest
@@ -16,6 +18,7 @@ import pytest
 from lens_gateway.config import (AgentConfig, AsrConfig, ComposerConfig, Config,
                                  OpenClawConfig)
 from lens_gateway.device import EXTERNAL_STATE, HudDevice, LeaseHeld, LeaseInvalid, style_header
+from lens_gateway.device.hud import HUD_MESSAGES
 
 THROTTLE_MS = 120
 LONG_TEXT = "".join(f"第{i}段内容，用来把正文撑到多页，好让翻页有东西可翻。" for i in range(30))
@@ -177,6 +180,30 @@ class TestState:
     def test_status_line_accepts_override(self, hud):
         line = hud.status_line("S8", word="未听清", glyph=hud.glyphs["warning"])
         assert "未听清" in line and hud.glyphs["warning"] in line
+
+    def test_status_line_does_not_print_the_badge_twice(self):
+        """徽记和词撞车时只印一次。
+
+        英文部署里 `agent_label` 和 `agent_name` 都是产品名，「即将发给哪个 agent」
+        那一帧（`voice/pipeline.py` 的确认帧）会传 `word=agent_name` ⇒ 曾经渲染成
+        `Lens → Lens`。在 576px 一行里那读起来像重复渲染的故障。
+        """
+        cfg = make_config(
+            locale="en",
+            agent=AgentConfig(provider="lens", url="ws://127.0.0.1:1/none",
+                              connect_timeout=1.0, budget_ms=12000,
+                              agent_label="Lens", agent_name="Lens"))
+        hud = HudDevice("dev_en", cfg)
+        line = hud.status_line("S3", word=cfg.agent_name)
+        assert line.count("Lens") == 1, line
+        # 退回该状态的默认词，而不是留下一个空荡荡的箭头
+        assert line == f"Lens {hud.glyphs['transcribing']} Heard", line
+
+    def test_status_line_still_prints_a_word_that_differs_from_the_badge(self):
+        """反向验证：去重不能顺手把正常的名字也吃掉（中文默认就是这一路）。"""
+        hud = HudDevice("dev_zh", make_config())      # 徽记「答」/ 名字「小龙虾」
+        line = hud.status_line("S3", word="小龙虾")
+        assert "小龙虾" in line and "转写中" not in line, line
 
     def test_style_header_derives_budget_from_layout(self, hud):
         """修 F/S：给模型的字数预算必须由真实像素版式算出，不是硬编码 85。"""
@@ -360,3 +387,70 @@ class TestTimerOwnership:
         await asyncio.sleep(0.15)
         assert hud.state == EXTERNAL_STATE, "旧定时器到点把屏幕清了 —— S7 复发"
         assert hud.current_frame["containers"]["body"].startswith("MCP 的内容")
+
+
+class TestNoChineseLiteralsReachTheScreen:
+    """网关侧会上屏的字符串必须走 `HUD_MESSAGES`，不许写中文字面量。
+
+    英文演示时屏幕上蹦出「与 agent 断开／按住说话可重试」才发现的：
+    `voice/pipeline.py` 里九处 `emit()` 直接写死了中文。这些全在错误分支上，
+    平时跑不到 —— 单测全绿、人眼也扫不到。
+
+    所以这里不是逐条断言文案，而是**扫源码**：`emit()` 附近出现中文字面量就失败。
+    下一个新写的错误分支会自己撞上来。
+    """
+
+    #: 只扫会上屏的调用点。日志、注释、docstring 里的中文不管 —— 那是给读代码的人看的。
+    EMIT_CONTEXT = re.compile(r"\.emit\(|status_line\(|word=|glyph=")
+    CJK = re.compile(r"[一-鿿]")
+    STRING = re.compile(r"""(['"])((?:[^'"\\]|\\.)*?)\1""")
+
+    def _offenders(self) -> list[str]:
+        root = pathlib.Path(__file__).resolve().parent.parent / "lens_gateway"
+        out: list[str] = []
+        for f in sorted(root.rglob("*.py")):
+            if f.name == "hud.py":
+                continue                     # 文案表本身就住在这里
+            lines = f.read_text(encoding="utf-8").splitlines()
+            for i, line in enumerate(lines):
+                st = line.strip()
+                if st.startswith(("#", "*", '"""', ":", "'''")):
+                    continue
+                ctx = "\n".join(lines[max(0, i - 3): i + 1])
+                if not self.EMIT_CONTEXT.search(ctx):
+                    continue
+                for m in self.STRING.finditer(line):
+                    if self.CJK.search(m.group(2)):
+                        rel = f.relative_to(root.parent)
+                        out.append(f"{rel}:{i + 1}  {st[:88]}")
+                        break
+        return out
+
+    def test_emit_sites_carry_no_chinese_literals(self) -> None:
+        bad = self._offenders()
+        assert bad == [], (
+            "这些地方直接把中文写进了会上屏的字符串，英文模式下会原样出现在眼镜上。\n"
+            "请挪进 device/hud.py 的 HUD_MESSAGES，再用 hud.msg(key) 取：\n  "
+            + "\n  ".join(bad))
+
+    def test_every_message_key_exists_in_both_locales(self) -> None:
+        """两种语言的 key 必须完全一致 —— 缺一个就是运行时 KeyError 上屏。"""
+        locales = list(HUD_MESSAGES)
+        assert len(locales) > 1
+        base = set(HUD_MESSAGES[locales[0]])
+        for loc in locales[1:]:
+            assert set(HUD_MESSAGES[loc]) == base, f"{loc} 与 {locales[0]} 的 key 对不上"
+
+    def test_english_messages_have_no_chinese(self) -> None:
+        for key, text in HUD_MESSAGES["en"].items():
+            assert not self.CJK.search(text), f'HUD_MESSAGES["en"][{key!r}] 还是中文：{text!r}'
+
+    def test_the_scanner_actually_looks_at_something(self) -> None:
+        """反向验证：把扫描器指向中文文案表本身，必须扫出东西。
+
+        否则「零违规」可能只是因为它什么都没在看。
+        """
+        hud_src = (pathlib.Path(__file__).resolve().parent.parent
+                   / "lens_gateway" / "device" / "hud.py").read_text(encoding="utf-8")
+        assert self.CJK.search(hud_src), "扫描器的正则连中文都匹配不到"
+        assert self.STRING.search(hud_src)

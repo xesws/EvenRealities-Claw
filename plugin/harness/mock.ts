@@ -173,6 +173,45 @@ const CHUNK_SAMPLES = 1600;
 
 const utf8 = new TextEncoder();
 
+/**
+ * 屏上字体。**渲染和测量必须用同一个值**，所以抽成常量：以前 `buildScreen` 内联了
+ * 一份字体串，谁改了那一份、测量那头不会跟着改，字形就会重新开始互相压。
+ *
+ * 必须是**比例字体**。这里原来写的是 SF Mono —— 实测拿它画拉丁文，整行比 pretext
+ * 算出的 G2 宽度宽 **46.6%**。实测同一句话的宽度（目标 = pretext 的 G2 度量）：
+ *   SF Mono 20px    英 +46.6%   中 +8.0%
+ *   本 stack 20px   英  +3.3%   中 +2.0%
+ *
+ * G2 **没有字号控制**，全屏单一字号；字号按 CJK advance(20px) 取。
+ */
+const FONT_SIZE = 20;
+const FONT_STACK =
+  "'Helvetica Neue', Helvetica, 'PingFang SC', 'Noto Sans CJK SC', sans-serif";
+
+/**
+ * 浏览器里这个字形实际有多宽（px）。
+ *
+ * 存在的理由：G2 的 advance 和浏览器字体的字形宽度**逐字都不一样**。整行总宽只差
+ * 3.3%，但那是平均值 —— `W` 在浏览器里明显宽于它的 G2 advance，`i`/`l` 明显窄。
+ * 早先的画法是把字形塞进 advance 宽的盒子里居中，于是宽的溢出盒子跟邻居**重叠**
+ * （`What's` 的 `Wh` 粘成一团），窄的两侧留白，字距忽宽忽窄。
+ * 拿到实测宽度才能把每个字形横向缩放到自己的 advance 盒里。
+ */
+const browserGlyphW = new Map<string, number>();
+let measureCtx: CanvasRenderingContext2D | null = null;
+
+function browserWidth(ch: string): number {
+  const hit = browserGlyphW.get(ch);
+  if (hit !== undefined) return hit;
+  if (!measureCtx) {
+    measureCtx = document.createElement('canvas').getContext('2d');
+    if (measureCtx) measureCtx.font = `${FONT_SIZE}px ${FONT_STACK}`;
+  }
+  const w = measureCtx ? measureCtx.measureText(ch).width : 0;
+  browserGlyphW.set(ch, w);
+  return w;
+}
+
 /** 该码点是否在 G2 字库内。判据：pretext 的 advance 为 0 ⇒ 回退链上没有任何字体覆盖它。 */
 function inFont(cp: number): boolean {
   return getAdvW(cp) > 0;
@@ -364,7 +403,16 @@ export function installEvenHostMock(opts: MockOptions): EvenHostMock {
         // 逐字形位置 = pretext 对前缀的累计宽度（含 kerning 与逐字形取整），与固件同源
         const left = getTextWidth(chars.slice(0, i).join(''));
         const w = getTextWidth(chars.slice(0, i + 1).join('')) - left;
-        span.style.cssText = `position:absolute;left:${left}px;width:${w}px;text-align:center;overflow:hidden;`;
+        // **横向缩放到自己的 advance 盒**，不是塞进去居中。
+        // 居中的画法会让宽于 advance 的字形溢出盒子、和邻居重叠（`Wh` 粘成一团），
+        // 窄于 advance 的两侧留白 —— 字距忽宽忽窄，整行读起来像坏掉的渲染。
+        // 缩放之后每个字形精确占据固件给它的 advance，代价只是字形本身横向差几个百分点。
+        const bw = browserWidth(chars[i]);
+        // w=0（零宽字符）就该零宽；bw=0（浏览器画不出）没有可缩放的东西，退回 1。
+        const scale = bw > 0.01 ? w / bw : 1;
+        span.style.cssText =
+          `position:absolute;left:${left}px;top:0;` +
+          `transform-origin:0 0;transform:scaleX(${scale.toFixed(4)});`;
         span.textContent = chars[i];
         lineEl.appendChild(span);
       }
@@ -381,9 +429,8 @@ export function installEvenHostMock(opts: MockOptions): EvenHostMock {
       el.style.cssText =
         `position:absolute;left:${def.xPosition ?? 0}px;top:${def.yPosition ?? 0}px;` +
         `width:${def.width ?? CANVAS.width}px;height:${def.height ?? 0}px;overflow:hidden;` +
-        // G2 **没有字号控制**，全屏单一字号；行高恒 27px。这里按 CJK advance(20px) 取字号，
-        // 使中文占位与真机接近；拉丁字形会被压进 pretext 算出的 advance 盒里。
-        `font-size:20px;line-height:${LINE_HEIGHT}px;` +
+        // 字体与字号见 `FONT_STACK` / `FONT_SIZE` —— 逐字形缩放要按同一份值测量。
+        `font-family:${FONT_STACK};font-size:${FONT_SIZE}px;line-height:${LINE_HEIGHT}px;` +
         // textColor 0~4 五级亮度是 G2 上唯一真实存在的视觉分层手段
         `opacity:${0.35 + 0.1625 * (def.textColor ?? 4)};`;
       const id = def.containerID ?? 0;

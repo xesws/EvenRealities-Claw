@@ -251,7 +251,8 @@ class TestBadgeIsComputedPerFrame:
     class _LateClaw(FakeClaw):
         """握手在 `chat_send` 内部才完成 —— 这就是冷启动第一句的真实时序。"""
 
-        async def chat_send(self, key, message, on_event, timeout_ms=180_000):
+        async def chat_send(self, key, message, on_event, timeout_ms=180_000,
+                            device_state=None):
             self.sent.append((key, message))
             self.connected.set()          # 直到这一刻才知道对面是替身
             await on_event("partial", "下午三点", "")

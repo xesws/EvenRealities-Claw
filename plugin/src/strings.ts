@@ -29,6 +29,8 @@ const DICT = {
     pairBadCode: '请输入 6 位数字配对码',
     pairOk: '配对成功',
     pairExpired: '设备认证失效，请重新配对',
+    pairCodeBad: '配对码无效或已过期',
+    retryIn: (secs: number) => `${secs}s 后重试`,
 
     statusIdle: '待机',
     ptt: '按住说话',
@@ -74,6 +76,8 @@ const DICT = {
     pairBadCode: 'Enter the 6-digit pairing code',
     pairOk: 'Paired',
     pairExpired: 'Device credentials expired. Pair again.',
+    pairCodeBad: 'Pairing code is invalid or has expired',
+    retryIn: (secs: number) => `retrying in ${secs}s`,
 
     statusIdle: 'Idle',
     ptt: 'Hold to talk',

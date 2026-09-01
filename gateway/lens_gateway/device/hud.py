@@ -70,6 +70,41 @@ STATE_LABELS: dict[str, dict[str, tuple[str, str]]] = {
 }
 
 #: 兼容：外部（含测试）曾直接 import 这张表。默认语言的那一份。
+#: 网关自己写死、会直接上屏的文案。
+#:
+#: 跟 `STATE_LABELS` 放在一起，是因为它们是同一件事：**屏幕上的每一个字都得跟着
+#: locale 走**。散落在 `voice/pipeline.py` 各个 `emit()` 调用里的中文字面量曾经
+#: 让英文演示的屏幕上蹦出「与 agent 断开／按住说话可重试」—— 平时跑不到的错误分支，
+#: 单测和人的眼睛都盖不住。有扫描测试盯着这张表以外的漏网之鱼（tests/test_device.py）。
+HUD_MESSAGES: dict[str, dict[str, str]] = {
+    "zh": {
+        "mic_silent_word": "无音频",
+        "mic_silent": "麦克风没有声音\n请松开重试",
+        "not_heard_word": "未听清",
+        "not_heard": "没听清，请再说一次",
+        "busy_word": "占用",
+        "busy": "上一条还在跑\n点「打断」后再说",
+        "still_thinking": "\n仍在思考·点「打断」可停止",
+        "agent_unreachable": "无法连接 agent",
+        "agent_error_hint": "按住说话可重试",
+        "aborted_word": "已打断",
+        "link_lost": "与 agent 的连接在这一轮发送过程中断开",
+    },
+    "en": {
+        "mic_silent_word": "no audio",
+        "mic_silent": "The microphone picked up nothing\nRelease and try again",
+        "not_heard_word": "unclear",
+        "not_heard": "I did not catch that. Please say it again.",
+        "busy_word": "busy",
+        "busy": "Still working on the last one\nTap Stop, then speak",
+        "still_thinking": "\nStill thinking - tap Stop to cancel",
+        "agent_unreachable": "Cannot reach the agent",
+        "agent_error_hint": "Hold to talk to retry",
+        "aborted_word": "stopped",
+        "link_lost": "Lost the connection to the agent mid-turn",
+    },
+}
+
 STATE_LABEL: dict[str, tuple[str, str]] = STATE_LABELS["zh"]
 
 #: 外部渲染态。协议对未知 state 的要求是"原样显示"，所以加它是**加法安全**的。
@@ -171,6 +206,7 @@ class HudDevice:
         self.badge = cfg.agent_label            # 修 S3：这个配置项以前从未被读取
         #: 屏上文字的语言。字形表不随它变（字形另有 `glyph_profile`）。
         self.labels = STATE_LABELS[cfg.composer.locale]
+        self.messages = HUD_MESSAGES[cfg.composer.locale]
         #: W6：接的是测试替身时，状态条徽记会被替换成醒目标记（见 note_agent）。
         #: `_agent_probe` 一旦绑定就**每帧现算**，`_agent_production` 退化成它的兜底值。
         self._agent_production = True
@@ -218,9 +254,15 @@ class HudDevice:
 
     # ---------------------------------------------------------------- 状态条
 
+
+    def msg(self, key: str) -> str:
+        """取一条本地化的上屏文案。key 不存在直接炸 —— 屏幕上出现 KeyError
+        总比出现一段用户看不懂的语言好，而且这只会在开发期发生。"""
+        return self.messages[key]
+
     def status_line(self, state: str, suffix: str = "", *, word: str | None = None,
                     glyph: str | None = None) -> str:
-        """组状态条：徽记 + 字形 + 中文词 (+ 附加信息)。
+        """组状态条：徽记 + 字形 + 词 (+ 附加信息)。
 
         修 S2：以前翻页时状态条被就地重写成 ``f"{badge} {glyph}"``，把「回答」「完成」
         这些词丢掉了 —— 同一个状态在首次渲染和翻页后长得不一样。现在只有这一个入口。
@@ -229,6 +271,12 @@ class HudDevice:
         badge = self.badge if self.agent_production else f"{self.badge}?"
         parts = [badge, glyph if glyph is not None else self.glyphs[name]]
         w = default_word if word is None else word
+        # 徽记和词撞车时不印两遍。中文默认配置（徽记「答」/ 名字「小龙虾」）天然
+        # 不会撞，英文却几乎必然撞：`agent_label` 和 `agent_name` 都是产品名 ⇒
+        # 「即将发给哪个 agent」那一帧渲染成 `Lens → Lens`，在 576px 一行里读起来
+        # 像是重复渲染的故障。徽记本来就已经说明了是哪个 agent，退回该状态的默认词。
+        if w == self.badge:   # 比未加「?」的原徽记，非生产态同样要去重
+            w = default_word
         if w:
             parts.append(w)
         if suffix:

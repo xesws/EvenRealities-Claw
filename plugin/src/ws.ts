@@ -12,6 +12,7 @@ import {
   type GlassesTelemetry,
   type ServerMessage,
 } from './types';
+import { t } from './strings';
 
 export type ConnState =
   | 'idle'
@@ -319,7 +320,7 @@ export class LensClient {
         this.intentionalClose = true;
         this.teardownSocket();
         this.setState('unpaired');
-        this.events.onPairFailed?.(message ?? '配对码无效或已过期');
+        this.events.onPairFailed?.(message ?? t.pairCodeBad);
         break;
       default:
         this.events.onServerError?.(code, message);
@@ -360,7 +361,7 @@ export class LensClient {
     this.backoffIndex += 1;
     // 抖动：0.5x ~ 1.0x
     const delay = Math.round(base * (0.5 + Math.random() * 0.5));
-    this.setState('reconnecting', `${Math.ceil(delay / 1000)}s 后重试`);
+    this.setState('reconnecting', t.retryIn(Math.ceil(delay / 1000)));
     this.reconnectTimer = window.setTimeout(() => {
       this.reconnectTimer = null;
       this.openSocket();

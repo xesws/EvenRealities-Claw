@@ -9,7 +9,7 @@
 import { getAdvW } from '@evenrealities/pretext';
 import { describe, expect, it } from 'vitest';
 import contract from '../../protocol/hud-contract.json';
-import { BLANK, GLYPHS, HUD_TEXT, LAYOUT, LINE_HEIGHT, CANVAS, EVENT_CAPTURE_CONTAINER } from '../src/hud';
+import { ALL_HUD_TEXT, BLANK, GLYPHS, HUD_TEXT, LAYOUT, LINE_HEIGHT, CANVAS, EVENT_CAPTURE_CONTAINER } from '../src/hud';
 
 function missing(text: string): string[] {
   const out: string[] = [];
@@ -36,10 +36,17 @@ describe('字形在库（G2 字库）', () => {
     }
   });
 
-  it('插件自己写死、会直接上屏的文案全部在库', () => {
-    for (const [key, text] of Object.entries(HUD_TEXT)) {
-      expect(missing(text), `HUD_TEXT.${key} = ${text}`).toEqual([]);
+  it('插件自己写死、会直接上屏的文案全部在库（**每种语言都扫**）', () => {
+    // 只扫当前 locale 是不够的：切到另一种语言，那几行字就再也没被检查过，
+    // 而字库外的字符在真机上什么都不画 —— 是最难发现的一类错。
+    const locales = Object.keys(ALL_HUD_TEXT) as (keyof typeof ALL_HUD_TEXT)[];
+    expect(locales.length).toBeGreaterThan(1);
+    for (const loc of locales) {
+      for (const [key, text] of Object.entries(ALL_HUD_TEXT[loc])) {
+        expect(missing(text), `ALL_HUD_TEXT.${loc}.${key} = ${text}`).toEqual([]);
+      }
     }
+    expect(Object.keys(HUD_TEXT)).toEqual(Object.keys(ALL_HUD_TEXT.zh));
     expect(missing(BLANK)).toEqual([]);
   });
 

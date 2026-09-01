@@ -45,6 +45,7 @@ class FakeClaw:
     def __init__(self, cfg, *, production: bool = True, connected: bool = True) -> None:
         self.cfg = cfg
         self.sent: list[tuple[str, str]] = []
+        self.device_states: list[dict | None] = []
         self.aborted: list[str] = []
         self.closed = False
         self.connect_calls = 0
@@ -67,8 +68,9 @@ class FakeClaw:
         self.closed = True
 
     async def chat_send(self, key: str, message: str, on_event,
-                        timeout_ms: int = 180_000) -> str:
+                        timeout_ms: int = 180_000, device_state: dict | None = None) -> str:
         self.sent.append((key, message))
+        self.device_states.append(device_state)
         return "run_fake"
 
     async def abort(self, key: str) -> None:

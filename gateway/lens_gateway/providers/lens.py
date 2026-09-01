@@ -265,7 +265,7 @@ class LensAgentClient:
         return session_key in self._session_runs
 
     async def chat_send(self, session_key: str, message: str, callback: ChatCallback,
-                        timeout_ms: int = 180_000) -> str:
+                        timeout_ms: int = 180_000, device_state: dict | None = None) -> str:
         """发起一轮。返回 runId。
 
         **登记必须先于 await。** agent 那头是「先回 res 再开跑」，而我们这头
@@ -279,10 +279,16 @@ class LensAgentClient:
         run = _Run(run_id="", session_key=session_key, callback=callback)
         self._pending_runs[session_key] = run
         try:
+            # `deviceState` 是协议 v1 之上的**可选**字段（未知字段两端都忽略，
+            # 加法安全）。带它的理由：眼镜的电量/佩戴状态本来就在网关的遥测缓存里，
+            # 而 agent 完全看不见 —— 实测问它「我眼镜还有多少电」，它编了个 82%。
+            # 与其为此新开一条 agent→网关的反向 RPC，不如把这一轮真的需要的
+            # 那点状态随请求一起送过去：没有新连接、没有新方向、没有轮询。
             res = await self._request("chat.send", {
                 "sessionKey": session_key,
                 "message": message,
                 "budgetMs": self.cfg.budget_ms,
+                **({"deviceState": device_state} if device_state else {}),
             })
         except Exception:
             self._pending_runs.pop(session_key, None)
@@ -296,6 +302,9 @@ class LensAgentClient:
         # **已经死掉的连接**上：回调永远等不到事件，`session_busy()` 永久为 True，
         # 眼镜锁死。这条竞态被 `_drops_after_run` 的用例稳定复现。
         if not self.connected.is_set():
+            # 这句只进日志，不上屏 —— 展示端（voice/pipeline.py）只放用户能据此行动的
+            # 那一行本地化文案，异常细节留给日志。否则任何一个我们自己抛的中文异常
+            # 都会绕过 locale 直接出现在眼镜上。
             raise ConnectionError("与 agent 的连接在这一轮发送过程中断开")
         run.run_id = run_id
         self._runs[run_id] = run

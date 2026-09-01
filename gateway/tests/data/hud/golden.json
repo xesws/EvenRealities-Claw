@@ -740,7 +740,7 @@
       "state": "S8",
       "containers": {
         "status": "工 × 出错",
-        "body": "无法连接 agent\nConnection refused",
+        "body": "无法连接 agent\n按住说话可重试",
         "foot": ""
       },
       "meta": {

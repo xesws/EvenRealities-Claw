@@ -39,7 +39,18 @@ class AgentConfig:
     provider: str = "openclaw"                 # openclaw | lens
     url: str = "ws://127.0.0.1:18790"          # provider=lens 时的 Lens Agent Protocol 端点
     connect_timeout: float = 10.0
-    budget_ms: int = 8000                      # 单轮延迟预算，超时即降级收尾
+    #: 单轮延迟预算的**上限**，超时即降级收尾。
+    #:
+    #: agent 侧取的是 `min(本值, skill.budget_ms)`（`lens_agent/loop.py`），所以本值
+    #: 一旦小于某个 skill 声明的预算，那个 skill 的预算就**永远拿不到** ——
+    #: AGENT-LAYER §9.2 那张「每个 skill 各自的预算」表会变成一纸空文。
+    #: 曾经就是这样：本值 8000 < weather 的 9000，天气问答在模型稍慢时必然降级，
+    #: 屏幕上出现「这个问题一时答不上来（预算耗尽）」。
+    #:
+    #: 所以它要留在**所有 skill 预算之上**；真正决定用户等多久的是 skill 自己的预算
+    #: （ask 4s / daily 6s / weather 9s），不是这个数。
+    #: 有回归测试盯着这个不变量：`tests/test_agent.py`。
+    budget_ms: int = 12000
     agent_label: str = "答"                    # 状态条徽记（自研 agent）
     agent_name: str = "小龙虾"
 

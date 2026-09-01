@@ -254,7 +254,10 @@ class OpenClawClient:
         return session_key in self._session_runs
 
     async def chat_send(self, session_key: str, message: str, callback: ChatCallback,
-                        timeout_ms: int = 180_000) -> str:
+                        timeout_ms: int = 180_000, device_state: dict | None = None) -> str:
+        # `device_state` 收下但**不往外发**：对面是不受控的第三方网关，
+        # 往它的协议里塞一个没约定过的字段，行为无法预期。眼镜自身的状态
+        # 只给自研 agent —— 那是我们两头都能改的协议。
         await self.ensure_connected()
         res = await self._request("chat.send", {
             "sessionKey": session_key,

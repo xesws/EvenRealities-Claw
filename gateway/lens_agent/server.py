@@ -141,7 +141,8 @@ class LensAgentServer:
         session_key = str(params.get("sessionKey") or "default")
         message = str(params.get("message") or "").strip()
         if not message:
-            await self._err(ws, req_id, "empty_message", "message 不能为空")
+            await self._err(ws, req_id, "empty_message",
+                            tools._t("message 不能为空", "message must not be empty"))
             return
         if session_key in self._runs and not self._runs[session_key].done():
             await self._err(ws, req_id, "busy", "该会话上一轮还在跑")
@@ -152,7 +153,12 @@ class LensAgentServer:
         except (TypeError, ValueError):
             await self._err(ws, req_id, "bad_params", "budgetMs 必须是整数毫秒")
             return
-        chat = ChatRequest(session_key=session_key, message=message, budget_ms=budget_ms)
+        # `deviceState` 是可选字段：老网关不发，这里就是 None，行为与从前一致。
+        device_state = params.get("deviceState")
+        if not isinstance(device_state, dict):
+            device_state = None
+        chat = ChatRequest(session_key=session_key, message=message,
+                           budget_ms=budget_ms, device_state=device_state)
         # 先回 runId 再开跑：网关要靠它把后续事件对上号（与 v3 同构）
         await self._res(ws, req_id, {"runId": chat.run_id})
         self._aborted.discard(session_key)

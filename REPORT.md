@@ -46,7 +46,7 @@
 1. [系统形态与仓库地图](#1-系统形态与仓库地图)
 2. [各组件详细说明](#2-各组件详细说明)
 3. [一次问答的完整数据流（含实测耗时）](#3-一次问答的完整数据流)
-4. [验证结果汇总（pytest 447 + vitest 82 + 语音 e2e 31 + MCP e2e 27 + 真 agent e2e 21）](#4-验证结果汇总)
+4. [验证结果汇总（pytest 524 + vitest 82 + 语音 e2e 31 + MCP e2e 27 + 真 agent e2e 21）](#4-验证结果汇总)
 5. [【最重要】拿到眼镜后的完整上手流程](#5-拿到眼镜后的完整上手流程)
 6. [运维手册：服务、配置、日志、更新、**MCP 接入**](#6-运维手册)
 7. [排障速查表](#7-排障速查表)
@@ -121,7 +121,7 @@ EvenRealities-Claw/
 │   │   ├── tools.py           ←   能力枚举只有 READ/WRITE，**没有 exec 档**
 │   │   ├── audit.py           ←   每次工具调用一行 JSON
 │   │   └── llm/deepseek.py    ←   DeepSeek OpenAI 兼容端点（aiohttp 直发，理由见 AGENT-LAYER §6.2）
-│   ├── tests/                 ← 447 单测 + e2e_sim.py（语音 31 项）+ e2e_mcp.py（MCP 27 项）
+│   ├── tests/                 ← 524 单测 + e2e_sim.py（语音 31 项）+ e2e_mcp.py（MCP 27 项）
 │   │                            + e2e_agent.py（真 agent 20 项）+ data/（语音数据集 / HUD golden）
 │   ├── requirements.txt
 │   ├── requirements-mcp.txt   ← MCP 表面的依赖（网关本身不需要）
@@ -316,7 +316,7 @@ version / model / endpoint / production）。`demo/fake_openclaw.py` 会**自报
 
 | 验证 | 范围 | 结果 |
 |---|---|---|
-| `gateway/tests/`（pytest，全量） | 下列各专项之和：排版引擎/配对/JWT/设备抽象/遥测/控制面鉴权/控制面路由/MCP 工具/agent 层/ASR 质量/mic 看门狗/HUD golden/provider 连接生命周期 | **447/447** |
+| `gateway/tests/`（pytest，全量） | 下列各专项之和：排版引擎/配对/JWT/设备抽象/遥测/控制面鉴权/控制面路由/MCP 工具/agent 层/ASR 质量/mic 看门狗/HUD golden/provider 连接生命周期 | **524/524** |
 | 排版与认证 | 字形度量/折行禁则/像素盒分页/净化/markdown 降级/版式契约/配对/JWT/吊销/过期/持久化，含 3 宽度 × 31 语料的参数化不变量与 600 例随机模糊 | **169/169** |
 | **设备抽象层**（`tests/test_device.py`） | 帧节流与 coalescing、seq 单调、状态迁移、翻页四触发源等价与边界、租约冲突/续租/过期/抢占、外部渲染走同一排版引擎、事件缓冲增量拉取、快照结构 | **24/24** |
 | **会话装配与回收**（`tests/test_session.py`） | S5 工具态接活、错误分支、`reset` 重新注入小屏风格、消息路由、会话 TTL 只回收「离线且静默」、启动钩子只注册一次、ASR warmup 幂等 | **19/19** |
@@ -444,9 +444,23 @@ export LENS_LLM_API_KEY=sk-...
 眼镜屏上的字**不归插件管**——它由网关整帧下发，插件一个字都不该改，
 否则同一帧在手机预览屏和眼镜上会长得不一样。
 
-不用浏览器也能验：`demo/verify_audio.py` 自己就是一台设备，拿一段 WAV 当麦克风
-把整条链路跑一遍并打印帧序列（`demo/audio/` 下有两段现成的英文提问，
-分别演示真工具调用与长回答分页）。
+不用浏览器也能验，两条路：
+
+```bash
+cd gateway
+.venv/bin/python ../demo/chat.py                      # 直接跟 agent 对话，随便问
+.venv/bin/python ../demo/chat.py -f cases.txt         # 一行一题，批量跑
+.venv/bin/python ../demo/verify_audio.py ../demo/audio/en-weather.wav
+```
+
+- **`demo/chat.py`** 说的就是 agent 自己的协议（§5.1），和网关说的是同一套 ——
+  你在这里问什么、怎么问都行，agent 的行为和戴着眼镜说话时完全一致。
+  每轮都把过程摊开：代码选中了哪个 skill、拿到哪些工具（闸 2）、**真实发生的工具调用**
+  与耗时、以及答案按 G2 的 576×288 真实版式排出来是几页、每页长什么样。
+  它不注入任何脚本、不开浏览器 —— 这是判断「这个 agent 到底能干什么」最快的入口。
+- **`demo/verify_audio.py`** 自己就是一台设备，拿一段 WAV 当麦克风把**整条**链路
+  （whisper → 网关 → agent → 排版 → 帧下发）跑一遍并打印帧序列。
+  `demo/audio/` 下有三段现成的英文提问，分别演示真工具调用、长回答、分页。
 
 ⚠️ **替身模式不是可以拿去演示的东西**：`demo/fake_openclaw.py` 在握手里自报
 `fixture: true`，网关会据此在状态条徽记上打「?」（W6）。**屏幕自己会告状，这是有意的。**
@@ -535,7 +549,7 @@ systemctl --user restart lens-gateway
 ```bash
 cd ~/EvenRealities-Claw/gateway
 .venv/bin/pip install -r requirements-dev.txt      # 测试依赖（pytest / pytest-asyncio / mcp）
-PYTHONPATH=. .venv/bin/pytest tests/ -q            # 447 单测，秒级
+PYTHONPATH=. .venv/bin/pytest tests/ -q            # 524 单测，秒级
 PYTHONPATH=. .venv/bin/python tests/e2e_sim.py     # 语音端到端，自足运行（~2 分钟）
 PYTHONPATH=. .venv/bin/python tests/e2e_mcp.py     # MCP 四进程真链路（~30 秒）
 
@@ -696,6 +710,33 @@ claude mcp add --transport http even-glasses http://127.0.0.1:8765/mcp
    `test_streaming_never_moves_the_reader` 第一版**没能咬住**，因为它复用的流式语料
    全都只有一页，`cur` 恒为 0，跟随与否都测不出来；换成真会跨页的语料才生效。
    golden 快照的 3 处 diff 逐帧核对过再重生成的。
+
+7. **它会假装自己什么都能做**。第一版工具表只有 `now` 和 `weather`，拿 15 个日常问题
+   跑一遍（`demo/chat.py -f`），发现问题不是「工具少」而是**没有工具时它会撒谎**：
+   「Set a timer for 10 minutes」答「Timer set for 10 minutes.」；
+   「Add milk to my shopping list」答「Milk and eggs are now on your shopping list.」；
+   问今天日程，它编出了客户电话和 Q3 roadmap review；问上一场比赛，它编出了
+   「Lakers 112-108 Celtics，LeBron 34 分」；问眼镜电量，它编了个 82% ——
+   而**那份遥测就在网关的缓存里**，只是 agent 拿不到。
+
+   对照组：问心率，它老实说看不到。所以模型不是不会拒绝 —— 是没人告诉它边界在哪：
+   小屏契约当时 6 条规则**全是排版**，没有一条讲能力。
+
+   修复分两层，顺序不能反。先给契约加了第 1 条（没有工具的动作直接说做不到、
+   没有工具的实时事实直接说不知道、绝不能说「已经帮你办好了」），
+   这一条就修掉了上面除日历外的全部编造；然后才是补工具，优先补
+   「系统里已经有数据、agent 却拿不到」的那些。
+
+   数字类问题**单靠契约修不掉** —— 模型说「我算一下」然后算错，它并不认为自己在编。
+   「离圣诞还有几天」两次跑给出 48 天和 116 天（正确 116）。所以 `calc`（AST 白名单
+   求值，不是 eval）和 `days_until` 是必须的。
+
+   顺带发现两件事：一是 `MAX_TURNS=3` 装不下 `now → calc → 回答` 这条两步工具链，
+   用户看到的是「工具轮次用尽」的道歉；二是 `list_remove` 在用户不报清单名时
+   落到默认清单，**「删成功了但其实什么都没删」**。前者提到 4 并把预算按
+   「模型往返次数」重定，后者改成找不到就在所有清单里找。
+   新增 67 条单测，5 个关键变异（把 `_eval_node` 换成真 `eval`、摘掉闸 3 的构造期检查、
+   去掉全局查找、让 `device` 没数据时编 82%、去掉 stale 标注）全部被咬住。
 
 ## 12. 阶段三预告（设计已定稿，未开发）
 

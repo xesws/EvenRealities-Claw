@@ -69,7 +69,9 @@ class ScriptedAgent:
     def session_busy(self, key: str) -> bool:
         return self._busy
 
-    async def chat_send(self, key: str, message: str, on_event) -> None:
+    async def chat_send(self, key: str, message: str, on_event,
+                        timeout_ms: int = 180_000,
+                        device_state: dict | None = None) -> None:
         if self._raises:
             raise RuntimeError(self._raises)
         for i, (kind, payload, extra) in enumerate(self._events):

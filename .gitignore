@@ -23,6 +23,10 @@ venv/
 
 # audio / models — never commit recordings
 *.wav
+# ……但演示素材例外：它们是 macOS `say` 合成的两三秒提问，不是真人录音，
+# 而 demo/audio/README.md 一直在讲「怎么用这些文件」。文件不进仓库的话，
+# clone 下来的人照着 README 走会发现素材根本不存在。
+!demo/audio/*.wav
 *.pcm
 *.mp3
 # 例外：e2e 合成测试语音（edge-tts 生成，非真人录音）
@@ -39,3 +43,6 @@ models/
 # 部署参数（含公网地址，不入库）
 DEPLOYMENT.local.md
 *.local.md
+
+# 截图工作目录（resources/ 里的成品才进仓库）
+.shots/

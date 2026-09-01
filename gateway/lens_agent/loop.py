@@ -16,13 +16,25 @@ from typing import Awaitable, Callable
 from . import policy, skills, tools
 from .audit import Audit
 from .llm.base import LLMProvider, LLMReply
+from .tools import _t
 
 log = logging.getLogger(__name__)
 
-MAX_TURNS = 3
-#: 降级收尾时缀在半截正文后面的标记。用「…」而不是文字，是因为正文区寸土寸金，
+#: 一轮对话里最多问几次模型。**不是"最多调几个工具"** —— 每一轮工具调用之后
+#: 还要再问一次模型，所以 now → calc → 回答就已经吃掉 3 次。
+#:
+#: 原来写 3，实测「离圣诞还有几天」（先 now 取今天、再 calc 做减法、再组织回答）
+#: 稳定撞上「工具轮次用尽」，用户看到的是一句道歉而不是答案。
+#: 真正的护栏是 deadline（skill 的 budget），它按墙钟掐；轮次上限只是防死循环，
+#: 不该顺带把正常的两步工具链也掐掉。
+MAX_TURNS = 4
+#: 降级收尾时缀在半截正文后面的标记。开头用「…」是因为正文区寸土寸金，
 #: 而这个字形已确认在 G2 字库内（docs/GLYPH-TABLE.md）。
-TRUNCATED_MARK = "…（未说完）"          # A5：硬上限，防无限工具循环
+#:
+#: 它跟着 locale 走：这一小截字是「屏幕不许撒谎」那条原则的**唯一载体** ——
+#: 没有它，一段被预算掐断的半截话会以「√ Done」的状态停在屏幕上，
+#: 用户完全看不出这句话没说完。所以它绝不能因为语言不对而变成看不懂的字。
+TRUNCATED_MARK = _t("…（未说完）", "… (cut off)")
 MAX_HISTORY = 6        # 一副眼镜的对话不需要长记忆；短历史也让缓存前缀更稳定
 
 #: (state, payload) → 发事件。state ∈ delta | tool | final | error
@@ -35,6 +47,9 @@ class ChatRequest:
     message: str
     budget_ms: int = 8000
     run_id: str = field(default_factory=lambda: "run_" + uuid.uuid4().hex[:8])
+    #: 网关随这一轮带过来的眼镜遥测快照（协议里的可选字段 `deviceState`）。
+    #: 只在本轮有效 —— 电量是会变的，缓存它等于制造一个新的说谎来源。
+    device_state: dict | None = None
 
 
 class AgentLoop:
@@ -51,6 +66,9 @@ class AgentLoop:
     async def run(self, req: ChatRequest, emit: Emit) -> str:
         """跑一轮对话。返回最终文本。"""
         skill = skills.route(req.message)          # ★ 闸 2：代码选 skill，模型无权参与
+        # 本轮的眼镜状态放进 ContextVar，`device` 工具从那里读。
+        # 放在这里而不是工具里去拿，是因为工具不该知道请求是怎么来的。
+        tools.DEVICE_STATE.set(req.device_state)
         history = self.history.get(req.session_key, [])
         messages = skill.build_messages(req.message, history)
         schemas = skill.tool_schemas()
@@ -74,14 +92,14 @@ class AgentLoop:
         for turn in range(MAX_TURNS):
             remaining = deadline - time.monotonic()
             if remaining <= 0.2:
-                return await self._degrade(messages, streamed, emit, "预算耗尽")
+                return await self._degrade(messages, streamed, emit, _t("预算耗尽", "out of time"))
             try:
                 reply: LLMReply = await self.llm.complete(
                     messages, schemas, sink=sink, timeout=max(1.0, remaining))
             except asyncio.CancelledError:
                 raise                       # 打断走的是取消，不能被下面吞掉
             except asyncio.TimeoutError:
-                return await self._degrade(messages, streamed, emit, "模型超时")
+                return await self._degrade(messages, streamed, emit, _t("模型超时", "model timed out"))
             except Exception as exc:
                 # 只兜超时是不够的：HTTP 429 / 5xx、连接中断、SSE 解析失败都会
                 # 从这里抛出来。让它冒到上层的话，用户屏幕上已经流出去的正文
@@ -89,7 +107,8 @@ class AgentLoop:
                 # 换来一行看不懂的英文。降级收尾至少保住已经在屏幕上的东西。
                 log.warning("模型调用失败：%s: %s", type(exc).__name__, exc)
                 return await self._degrade(
-                    messages, streamed, emit, f"模型出错（{type(exc).__name__}）")
+                    messages, streamed, emit,
+                    _t(f"模型出错（{type(exc).__name__}）", f"model error: {type(exc).__name__}"))
             if reply.reasoning_chars:
                 # 关了 thinking 还收到思维链 = 服务端行为变了，值得报警。
                 # 但它**已经被丢弃了**，不会上屏（deepseek.py `_consume`）。
@@ -110,7 +129,8 @@ class AgentLoop:
             # 不该留在屏幕上。归零之后下一个 delta 就是新的完整正文。
             streamed = ""
 
-        return await self._degrade(messages, streamed, emit, "工具轮次用尽")
+        return await self._degrade(messages, streamed, emit,
+                                   _t("工具轮次用尽", "ran out of tool turns"))
 
     async def _invoke(self, req: ChatRequest, skill: skills.Skill, call,
                       deadline: float, emit: Emit):
@@ -160,7 +180,8 @@ class AgentLoop:
             # 「√ 完成」的状态停在屏幕上 —— 用户完全看不出这句话没说完，
             # 而这正是最需要他知道的事。整个项目的前提是"屏幕不许撒谎"。
             return streamed.rstrip() + TRUNCATED_MARK
-        return f"这个问题一时答不上来（{why}），换个说法再问一次吧。"
+        return _t(f"这个问题一时答不上来（{why}），换个说法再问一次吧。",
+                  f"I could not finish that one ({why}). Try asking again.")
 
     def _remember(self, session_key: str, question: str, answer: str) -> None:
         hist = self.history.setdefault(session_key, [])

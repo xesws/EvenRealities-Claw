@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from typing import Callable
 
 from ..asr import AsrEngine, StablePrefixTracker
 from ..config import Config
@@ -26,12 +27,16 @@ def fmt_secs(s: float) -> str:
 
 class VoicePipeline:
     def __init__(self, hud: HudDevice, cfg: Config, asr: AsrEngine, claw: AgentProvider,
-                 session_key: str):
+                 session_key: str, device_state: Callable[[], dict | None] | None = None):
         self.hud = hud
         self.cfg = cfg
         self.asr = asr
         self.claw = claw
         self.session_key = session_key
+        #: 取这一刻的眼镜遥测快照（电量/佩戴/连接）。**注入而不是自己去拿**：
+        #: 语音链路不该知道遥测存在哪儿，它只需要在发问时能问一句「现在什么状态」。
+        #: 没注入就是 None —— 单测和 openclaw provider 都走这一路。
+        self._device_state = device_state or (lambda: None)
 
         self._pcm = bytearray()
         self._listen_started = 0.0
@@ -113,8 +118,9 @@ class VoicePipeline:
                 budget = (self.cfg.asr.mic_gap_seconds if self._audio_started
                           else self.cfg.asr.mic_warmup_seconds)
                 if silent_for > budget:
-                    hud.emit("S2", hud.status_line("S2", word="无音频", glyph=hud.glyphs["warning"]),
-                             "麦克风没有声音\n请松开重试", urgent=True)
+                    hud.emit("S2", hud.status_line("S2", word=hud.msg("mic_silent_word"),
+                                               glyph=hud.glyphs["warning"]),
+                             hud.msg("mic_silent"), urgent=True)
                     continue
                 status = hud.status_line("S2", fmt_secs(elapsed))
                 if len(self._pcm) < 3200:
@@ -151,12 +157,14 @@ class VoicePipeline:
         hud.emit("S3", hud.status_line("S3"), "", urgent=True)
         result = await self.asr.final(pcm)
         if not result.text:
-            hud.emit("S8", hud.status_line("S8", word="未听清"), "没听清，请再说一次", urgent=True)
+            hud.emit("S8", hud.status_line("S8", word=hud.msg("not_heard_word")),
+                     hud.msg("not_heard"), urgent=True)
             hud.start_timer(lambda: hud.idle_after(5))
             return
         if self.claw.session_busy(self.session_key):
-            hud.emit("S8", hud.status_line("S8", word="占用", glyph=hud.glyphs["warning"]),
-                     "上一条还在跑\n点「打断」后再说", urgent=True)
+            hud.emit("S8", hud.status_line("S8", word=hud.msg("busy_word"),
+                                           glyph=hud.glyphs["warning"]),
+                     hud.msg("busy"), urgent=True)
             hud.start_timer(lambda: hud.idle_after(8))
             return
         low_conf = result.avg_logprob < self.cfg.composer.low_conf_threshold
@@ -204,7 +212,7 @@ class VoicePipeline:
                     if hud.state != "S4":
                         break
                     s = int(time.monotonic() - started)
-                    extra = "\n仍在思考·点「打断」可停止" if s > 30 else ""
+                    extra = hud.msg("still_thinking") if s > 30 else ""
                     hud.emit("S4", hud.status_line("S4", f"{s}s"), self._last_question + extra)
             except asyncio.CancelledError:
                 pass
@@ -212,11 +220,17 @@ class VoicePipeline:
         hud.start_timer(thinking_timer)
 
         try:
-            await self.claw.chat_send(self.session_key, message, self.on_agent_event)
+            await self.claw.chat_send(self.session_key, message, self.on_agent_event,
+                                      device_state=self._device_state())
         except Exception as exc:
+            # 异常细节只进日志，**不上屏**：`str(exc)` 可能是我们自己抛的中文串、
+            # 也可能是 aiohttp 的英文串，两者都绕过 locale。而屏幕上真正有用的
+            # 只有「连不上」这一件事 —— 用户对着 8 行的屏幕也做不了别的。
             log.exception("chat_send failed")
             hud.cancel_timer()
-            hud.emit("S8", hud.status_line("S8"), f"无法连接 agent\n{str(exc)[:24]}", urgent=True)
+            hud.emit("S8", hud.status_line("S8"),
+                     f'{hud.msg("agent_unreachable")}\n{hud.msg("agent_error_hint")}',
+                     urgent=True)
             hud.start_timer(lambda: hud.idle_after(15))
 
     async def on_agent_event(self, kind: str, payload: str, extra: str) -> None:
@@ -239,7 +253,8 @@ class VoicePipeline:
                      extra or self._last_question, urgent=True)
         elif kind == "error":
             hud.cancel_timer()
-            hud.emit("S8", hud.status_line("S8"), f"{payload[:30]}\n按住说话可重试", urgent=True)
+            hud.emit("S8", hud.status_line("S8"),
+                 f'{payload[:30]}\n{hud.msg("agent_error_hint")}', urgent=True)
             hud.start_timer(lambda: hud.idle_after(15))
 
     def _on_reply_text(self, full_text: str, final: bool) -> None:
@@ -275,7 +290,8 @@ class VoicePipeline:
             return
         p = hud.paginator
         if p.total > 1 or p.page_text(0):
-            hud.emit("S7", hud.status_line("S7", word="已打断", glyph=hud.glyphs["stopped"]),
+            hud.emit("S7", hud.status_line("S7", word=hud.msg("aborted_word"),
+                                           glyph=hud.glyphs["stopped"]),
                      p.page_text(), p.footer(), urgent=True)
             hud.start_timer(lambda: hud.idle_after(self.cfg.composer.reading_idle_seconds))
         else:

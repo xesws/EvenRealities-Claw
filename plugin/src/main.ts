@@ -89,7 +89,7 @@ const ui = new LensUi({
     client.disconnect();
     void store.clearAuth();
     ui.showPairScreen(gatewayUrl || defaultGatewayUrl());
-    ui.setConn('未配对', 'bad');
+    ui.setConn(t.connUnpaired, 'bad');
   },
 });
 
@@ -245,7 +245,7 @@ async function bootstrap(): Promise<void> {
     client.connect();
   } else {
     ui.showPairScreen(gatewayUrl);
-    ui.setConn('未配对', 'bad');
+    ui.setConn(t.connUnpaired, 'bad');
   }
 }
 

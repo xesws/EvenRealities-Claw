@@ -37,7 +37,8 @@ class DeviceSession:
         # 正好是替身在答话却不打标的时候。理由写在 `HudDevice.agent_production`。
         self.hud.bind_agent_probe(lambda: agent_is_trusted(self.claw))
         self.telemetry = TelemetryStore(stale_seconds=cfg.composer.telemetry_stale_seconds)
-        self.voice = VoicePipeline(self.hud, cfg, asr, claw, self.session_key)
+        self.voice = VoicePipeline(self.hud, cfg, asr, claw, self.session_key,
+                                   device_state=self.telemetry.snapshot)
 
         # 连接归会话所有：HUD 只管画面，遥测命令这类非帧消息走这里
         self._send: SendFunc | None = None
