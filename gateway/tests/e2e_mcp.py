@@ -283,7 +283,9 @@ def main() -> int:
     mcp_log = open(Path(state_dir) / "mcp.log", "w")
     print(f"日志目录: {state_dir}")
 
-    gw = subprocess.Popen([str(ROOT / ".venv/bin/python"), "-m", "lens_gateway.main", "serve"],
+    # sys.executable 而不是写死的 .venv/bin/python：CI 上没有 venv（setup-python + pip 装进的是系统 Python），
+    # 写死路径会得到一句 FileNotFoundError。本机跑时 sys.executable 就是那个 venv，两边都对。
+    gw = subprocess.Popen([sys.executable, "-m", "lens_gateway.main", "serve"],
                           env=env, cwd=str(ROOT), stdout=gw_log, stderr=subprocess.STDOUT)
     procs = [gw]
     try:
@@ -297,7 +299,7 @@ def main() -> int:
                    "LENS_CONTROL_URL": f"http://127.0.0.1:{gw_port}",
                    "LENS_CONTROL_SECRET": secret,
                    "LENS_MCP_TRANSPORT": "streamable-http"}
-        mp = subprocess.Popen([str(ROOT / ".venv/bin/python"), "-m", "lens_mcp"],
+        mp = subprocess.Popen([sys.executable, "-m", "lens_mcp"],
                               env=mcp_env, cwd=str(ROOT), stdout=mcp_log, stderr=subprocess.STDOUT)
         procs.append(mp)
         if not wait_http(f"http://127.0.0.1:{mcp_port}/mcp", {}, 30):

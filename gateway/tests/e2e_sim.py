@@ -419,7 +419,9 @@ async def main() -> None:
     log_file = open(Path(state_dir) / "server.log", "w")
     print(f"服务端日志: {state_dir}/server.log")
     proc = subprocess.Popen(
-        [str(ROOT / ".venv/bin/python"), "-m", "lens_gateway.main", "serve"],
+        # sys.executable 而不是写死的 .venv/bin/python：CI 上没有 venv（setup-python + pip 装进的是系统 Python），
+        # 写死路径会得到一句 FileNotFoundError。本机跑时 sys.executable 就是那个 venv，两边都对。
+        [sys.executable, "-m", "lens_gateway.main", "serve"],
         env=env, cwd=str(ROOT), stdout=log_file, stderr=subprocess.STDOUT)
     try:
         print("等待网关就绪（含模型加载）…")

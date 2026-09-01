@@ -308,7 +308,7 @@ def main() -> int:
     gw_log = open(Path(state) / "gateway.log", "w")
 
     agent = subprocess.Popen(
-        [str(ROOT / ".venv/bin/python"), "-m", "lens_agent"],
+        [sys.executable, "-m", "lens_agent"],
         env={**env, "LENS_AGENT_PORT": str(agent_port),
              "LENS_AGENT_AUDIT": str(Path(state) / "audit.jsonl")},
         cwd=str(ROOT), stdout=agent_log, stderr=subprocess.STDOUT)
@@ -318,7 +318,7 @@ def main() -> int:
             print("agent 未就绪，见 agent.log")
             return 1
         gw = subprocess.Popen(
-            [str(ROOT / ".venv/bin/python"), "-m", "lens_gateway.main", "serve"],
+            [sys.executable, "-m", "lens_gateway.main", "serve"],
             env={**env, "LENS_STATE_DIR": state},
             cwd=str(ROOT), stdout=gw_log, stderr=subprocess.STDOUT)
         procs.append(gw)
