@@ -39,9 +39,17 @@ class LensAgentServer:
         #: sessionKey → 正在跑的任务。眼镜一次只说一句话，同一会话不并发。
         self._runs: dict[str, asyncio.Task] = {}
         self._aborted: set[str] = set()
-        #: 当前这条网关连接。提醒到点时要往它上面发通知 —— 那一刻没有任何
-        #: run 在跑，所以通知不带 runId，走的是一条**主动**的事件。
-        self._ws: web.WebSocketResponse | None = None
+        #: 所有活着的连接，**按连上的先后**。提醒到点时要往其中一条发通知 ——
+        #: 那一刻没有任何 run 在跑，所以通知不带 runId，走的是一条**主动**的事件。
+        #:
+        #: 为什么是一个列表而不是"当前那条连接"：连上来的不止网关一个。
+        #: `demo/chat.py` 也说同一套协议，它一 connect 就会把那个单槽覆盖掉，
+        #: 退出时再置空 —— 于是**跑一次调试 CLI，提醒就再也送不到眼镜上了**，
+        #: 而且没有任何症状，直到某条提醒该响的时候没响。
+        self._conns: list[web.WebSocketResponse] = []
+        #: sessionKey → 它最后一次是从哪条连接来的。提醒记着自己的 sessionKey，
+        #: 所以能精确送回**当初交代这件事的那一头**，而不是猜。
+        self._session_ws: dict[str, web.WebSocketResponse] = {}
         self.reminders = ReminderScheduler(self._notify)
 
     # ---------------- HTTP/WS ----------------
@@ -119,7 +127,8 @@ class LensAgentServer:
                 try:
                     if method == "connect":
                         shook = True
-                        self._ws = ws
+                        if ws not in self._conns:
+                            self._conns.append(ws)
                         await self._res(ws, req_id, self.hello())
                         # 握手完成才恢复提醒：早于这一刻发通知，网关那头
                         # 还没准备好接收。sessionKey 由请求方在 chat.send 里给，
@@ -145,8 +154,12 @@ class LensAgentServer:
                 if not task.done():
                     task.cancel()
                 self._runs.pop(key, None)
-            if self._ws is ws:
-                self._ws = None
+            # 只摘掉自己这一条。别的连接（尤其是网关那条）不受影响 ——
+            # 这正是从前那个单槽做不到的事。
+            if ws in self._conns:
+                self._conns.remove(ws)
+            for key in [k for k, w in self._session_ws.items() if w is ws]:
+                del self._session_ws[key]
             # 待响的提醒**不取消**：连接会重连，而提醒是用户交代过的事。
             # 断连期间到点的那些由 `restore` 按宽限期补发。
             await ws.close()
@@ -157,8 +170,13 @@ class LensAgentServer:
 
         网关据此写屏 —— 屏幕是它的，agent 只能请求。
         """
-        ws = self._ws
+        # 先找**当初交代这件事的那一头**；它不在了，再退回最近连上的那条。
+        # 退回是有意的：agent 进程重启后 `restore` 会把磁盘上的提醒重新排上，
+        # 而那时还没有任何 chat.send 来建立 sessionKey → 连接的映射。
+        ws = self._session_ws.get(session_key)
         if ws is None or ws.closed:
+            ws = next((w for w in reversed(self._conns) if not w.closed), None)
+        if ws is None:
             # 发不出去就留在磁盘上，等网关重连时 `restore` 在宽限期内补发。
             raise ConnectionError("网关不在线")
         await self._send(ws, {"type": "event", "event": "notify",
@@ -169,6 +187,9 @@ class LensAgentServer:
     async def _on_send(self, ws: web.WebSocketResponse, req_id: str,
                        params: dict) -> None:
         session_key = str(params.get("sessionKey") or "default")
+        # 记下这个会话是从哪条连接来的 —— 提醒到点时要原路送回去，
+        # 否则「谁交代的」和「送给谁」就对不上了。
+        self._session_ws[session_key] = ws
         message = str(params.get("message") or "").strip()
         if not message:
             await self._err(ws, req_id, "empty_message",

@@ -81,7 +81,11 @@ class TestClockTimes:
 
     async def test_a_clock_time_already_past_today_is_refused(self, store):
         now = datetime.now()
-        past = now - timedelta(hours=2)
+        # 往回退两小时是为了拿一个「今天已经过去的钟点」—— 但**午夜之后就退过头了**：
+        # 00:25 减两小时是昨天的 22:25，而 "22:25" + day=today 指的是今晚，
+        # 于是这条断言在每天 00:00–02:00 之间假失败。夹到今天零点为止。
+        past = max(now - timedelta(hours=2),
+                   now.replace(hour=0, minute=0, second=0, microsecond=0))
         r = await call("remind_set", at=f"{past.hour:02d}:{past.minute:02d}",
                        day="today", text="x")
         assert not store.exists() or json.loads(store.read_text()) == []
@@ -340,3 +344,112 @@ class TestGates:
                 else:
                     with pytest.raises(policy.PolicyDenied):
                         policy.check(skill, name)
+
+
+class TestDeliveryDoesNotSilentlyLoseReminders:
+    """两条真跑演示时抓到的丢失路径。两条的症状是同一句话：**说好要提醒我，结果没响。**"""
+
+    async def test_a_failed_send_keeps_it_on_disk(self, store):
+        """★ 送不出去 ≠ 响过了。
+
+        旧实现在 `_notify` 抛异常之后**继续往下走**，把这条从磁盘划掉 ——
+        于是一次暂时的断连（网关重启、连接抖动）就把用户交代过的事永久丢掉，
+        而且不留痕迹。它应该留在盘上，等 `restore` 在宽限期内补发。
+        """
+        row = {"id": "rm_1", "at": time.time() + 0.02, "text": "ding", "session": "lens:devA"}
+        store.write_text(json.dumps([row]))
+
+        async def notify(key, text):
+            raise ConnectionError("网关不在线")
+
+        sched = ReminderScheduler(notify)
+        sched.schedule("lens:devA", row)
+        await asyncio.sleep(0.15)
+        assert [r["id"] for r in json.loads(store.read_text())] == ["rm_1"], \
+            "送失败的提醒被从磁盘上划掉了 —— 它再也不会响，而且没有任何痕迹"
+
+    async def test_a_successful_send_still_clears_it(self, store):
+        """反向守着上一条：成功送达之后必须划掉，否则 restore 会在宽限期内重复响。"""
+        row = {"id": "rm_1", "at": time.time() + 0.02, "text": "ding", "session": "lens:devA"}
+        store.write_text(json.dumps([row]))
+
+        async def notify(key, text):
+            return None
+
+        sched = ReminderScheduler(notify)
+        sched.schedule("lens:devA", row)
+        await asyncio.sleep(0.15)
+        assert json.loads(store.read_text()) == []
+
+
+class TestNotifyRouting:
+    """★ 一条调试 CLI 连上来，提醒就再也送不到眼镜上了。
+
+    agent 从前只留**一个**槽记「当前那条连接」。而说这套协议的不止网关一个：
+    `demo/chat.py` 一 connect 就把那个槽覆盖掉，退出时再把它置空 ——
+    此后 `_notify` 看到的永远是「网关不在线」。真跑时的症状是提醒静静地不响，
+    而 `remind_set` 明明成功了。单测从前把 notify 整个 mock 掉，所以照不到这里。
+    """
+
+    class _FakeWs:
+        """只实现 `_send` 真正用到的两样：`closed` 和 `send_str`。"""
+
+        def __init__(self) -> None:
+            self.closed = False
+            self.sent: list[dict] = []
+
+        async def send_str(self, raw: str) -> None:
+            self.sent.append(json.loads(raw))
+
+    @staticmethod
+    def _server() -> "LensAgentServer":  # noqa: F821
+        """绕开 `__init__`：它会建 aiohttp app、排程器和 HTTP 会话，
+        而这几条测的只是 `_notify` 的选路。"""
+        from lens_agent.server import LensAgentServer
+        srv = LensAgentServer.__new__(LensAgentServer)
+        srv._conns = []
+        srv._session_ws = {}
+        return srv
+
+    async def test_a_cli_connecting_and_leaving_does_not_orphan_the_gateway(self):
+        srv = self._server()
+        gw, cli = self._FakeWs(), self._FakeWs()
+        srv._conns.append(gw)                      # 网关先连上
+        srv._session_ws["lens:devA"] = gw
+        srv._conns.append(cli)                     # 调试 CLI 随后连上
+        srv._conns.remove(cli)                     # …然后退出（模拟它的 finally）
+
+        await srv._notify("lens:devA", "check the oven")
+        assert gw.sent, "网关被一条来了又走的 CLI 挤掉了"
+        assert gw.sent[0]["event"] == "notify"
+        assert gw.sent[0]["payload"]["text"] == "check the oven"
+
+    async def test_it_goes_back_to_whoever_asked_for_it(self):
+        """两条连接同时在，提醒必须回到**当初交代这件事的那一头**。"""
+        srv = self._server()
+        gw, cli = self._FakeWs(), self._FakeWs()
+        srv._conns += [gw, cli]
+        srv._session_ws = {"lens:devA": gw, "cli-7f3": cli}
+
+        await srv._notify("cli-7f3", "stretch")
+        assert cli.sent, "提醒没送到交代它的那一头"
+        assert not gw.sent, "提醒送到了别人的屏幕上"
+
+    async def test_it_falls_back_to_the_newest_live_connection(self):
+        """agent 重启后 `restore` 先于任何 chat.send 跑，那时还没有会话映射。"""
+        srv = self._server()
+        gw = self._FakeWs()
+        srv._conns.append(gw)                      # 映射是空的
+
+        await srv._notify("lens:devA", "ding")
+        assert gw.sent and gw.sent[0]["payload"]["text"] == "ding"
+
+    async def test_no_live_connection_raises_so_it_stays_on_disk(self):
+        srv = self._server()
+        dead = self._FakeWs()
+        dead.closed = True
+        srv._conns.append(dead)
+        srv._session_ws["lens:devA"] = dead
+
+        with pytest.raises(ConnectionError):
+            await srv._notify("lens:devA", "ding")
