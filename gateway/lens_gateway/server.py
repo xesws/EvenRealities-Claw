@@ -22,7 +22,7 @@ from .asr import AsrEngine
 from .auth import AuthStore
 from .config import STATE_DIR, Config, control_secret, jwt_secret
 from .control import ControlPlane
-from .openclaw import OpenClawClient
+from .providers import AgentProvider, build_provider
 from .session import DeviceSession
 
 log = logging.getLogger(__name__)
@@ -34,7 +34,7 @@ class LensServer:
         self.auth = AuthStore(STATE_DIR, jwt_secret())
         self.control_secret = control_secret()
         self.asr = AsrEngine(cfg.asr)
-        self.claw = OpenClawClient(cfg.openclaw)
+        self.agent: AgentProvider = build_provider(cfg)
         self.sessions: dict[str, DeviceSession] = {}      # deviceId -> 常驻会话
         self.active_ws: dict[str, web.WebSocketResponse] = {}  # deviceId -> 当前连接
         self._sweeper: asyncio.Task | None = None
@@ -115,17 +115,20 @@ class LensServer:
         except Exception:
             log.exception("asr warmup failed")
         try:
-            await self.claw.ensure_connected()
+            await self.agent.ensure_connected()
         except Exception:
-            log.exception("openclaw connect failed (将在首次使用时重试)")
+            log.exception("agent connect failed (将在首次使用时重试)")
 
     # ---------- 健康/管理 ----------
 
     async def handle_health(self, _req: web.Request) -> web.Response:
+        # `agent` 是 W6 溯源：演示时当场 curl 一下就能看到接的到底是谁、是不是替身。
+        # `openclaw` 这个键保留是为了不破坏既有探针脚本（它现在的语义是"agent 已连接"）。
         return web.json_response({
             "ok": True,
             "asr_ready": self.asr.ready,
-            "openclaw": self.claw.connected.is_set(),
+            "openclaw": self.agent.connected.is_set(),
+            "agent": {"connected": self.agent.connected.is_set(), **self.agent.info().as_dict()},
             "devices": len(self.auth.list_devices()),
             "sessions": len(self.sessions),
         })
@@ -190,7 +193,7 @@ class LensServer:
 
         session = self.sessions.get(device_id)
         if session is None:
-            session = DeviceSession(device_id, self.cfg, self.asr, self.claw)
+            session = DeviceSession(device_id, self.cfg, self.asr, self.agent)
             self.sessions[device_id] = session
 
         async def send_json(obj: dict) -> None:

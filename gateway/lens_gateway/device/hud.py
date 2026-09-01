@@ -147,7 +147,11 @@ class HudDevice:
             body = self.layout.body
             self.layout = replace(self.layout, body=replace(body, safety_px=cfg.composer.body_safety_px))
         self.glyphs = glyph_set(cfg.composer.glyph_profile, cfg.composer.glyph_overrides or None)
-        self.badge = cfg.openclaw.agent_label   # 修 S3：这个配置项以前从未被读取
+        self.badge = cfg.agent_label            # 修 S3：这个配置项以前从未被读取
+        #: W6：接的是测试替身时，状态条徽记会被替换成醒目标记（见 note_agent）。
+        #: `_agent_probe` 一旦绑定就**每帧现算**，`_agent_production` 退化成它的兜底值。
+        self._agent_production = True
+        self._agent_probe: Callable[[], bool] | None = None
 
         self.paginator = Paginator(box=self.layout.body, glyphs=self.glyphs)
 
@@ -199,13 +203,51 @@ class HudDevice:
         这些词丢掉了 —— 同一个状态在首次渲染和翻页后长得不一样。现在只有这一个入口。
         """
         name, default_word = STATE_LABEL[state]
-        parts = [self.badge, glyph if glyph is not None else self.glyphs[name]]
+        badge = self.badge if self.agent_production else f"{self.badge}?"
+        parts = [badge, glyph if glyph is not None else self.glyphs[name]]
         w = default_word if word is None else word
         if w:
             parts.append(w)
         if suffix:
             parts.append(suffix)
         return " ".join(p for p in parts if p)
+
+    @property
+    def agent_production(self) -> bool:
+        """本帧要不要打「?」—— **每次取帧时现算**，不是一轮取样一次。
+
+        为什么必须现算：`agent_is_trusted()` 在"还没握上手"时返回 True（那时对端
+        身份是"未知"而不是"已知是替身"）。只要在某个时刻取样一次就把值钉住，
+        冷启动 / 断线重连后的那一段时间里屏幕就会替替身打掩护 —— 而那恰恰是
+        演示里最关键的第一句。现算把这个时序窗口整个消掉：连接什么时候握上，
+        下一帧的徽记就什么时候变。
+
+        探针出错不该把屏幕带崩，回落到上次已知值。
+        """
+        if self._agent_probe is None:
+            return self._agent_production
+        try:
+            self._agent_production = bool(self._agent_probe())
+        except Exception:                                   # pragma: no cover - 防御
+            log.debug("agent 溯源探针失败，沿用上次已知身份", exc_info=True)
+        return self._agent_production
+
+    def bind_agent_probe(self, probe: Callable[[], bool]) -> None:
+        """绑定 W6 溯源探针（一般是 `lambda: agent_is_trusted(provider)`）。"""
+        self._agent_probe = probe
+
+    def note_agent(self, production: bool) -> None:
+        """W6 · agent 溯源在屏幕上的那一半。
+
+        接的是测试替身（`demo/fake_openclaw.py` 这类）时，状态条徽记变成
+        ``工?`` —— **眼镜上一眼就能看出这不是真 agent**。这比只写进日志强：
+        演示时如果谁偷偷把 agent 换成替身，屏幕自己会告状。
+
+        `?` U+003F 是 ASCII，必然在字库内，不需要走字形降级表。
+
+        绑定了探针之后这个值只是兜底 —— 探针每帧都会把它覆盖掉。
+        """
+        self._agent_production = bool(production)
 
     # ---------------------------------------------------------------- 电量
 
@@ -243,7 +285,7 @@ class HudDevice:
         return {
             "type": "frame", "seq": self.seq, "state": state,
             "containers": {"status": status, "body": body, "foot": foot},
-            "meta": {"rec": self.listening, "agent": self.cfg.openclaw.agent_name,
+            "meta": {"rec": self.listening, "agent": self.cfg.agent_name,
                      "page": {"cur": self.paginator.cur + 1, "total": self.paginator.total},
                      **meta},
         }

@@ -3,7 +3,9 @@
 > 目标：用一个**小到能读完、默认只读、可整体搬走**的自研 agent，替代直接接入 OpenClaw。
 > 参考对象：[NanoClaw](https://github.com/nanocoai/nanoclaw)（~700 行、容器优先隔离）与
 > [nanobot](https://github.com/HKUDS/nanobot)（~4000 行覆盖 OpenClaw 90% 能力）。
-> 状态：**设计稿，未实现**。本文只描述将要建成的东西，不描述现状。
+> 状态：**P0–P2 已实现并接入**（`gateway/lens_agent/`，M6）。P3（容器隔离演练）未做。
+> 实现过程中有一处偏离设计，理由记在 §6.2；设计阶段的四个问号已实测，结果在 §13.1。
+> 本文描述的是现状，未落地的部分都已就地标注。
 
 ---
 
@@ -248,8 +250,23 @@ class LLMProvider(Protocol):
                        stream: bool, emit: EventEmitter) -> LLMReply: ...
 ```
 
-首个实现 `llm/deepseek.py`，用 **OpenAI 官方 Python SDK** 指向 DeepSeek 的
-OpenAI 兼容端点（DeepSeek 官方文档给出的就是这个用法）。
+首个实现 `llm/deepseek.py`。
+
+**实现时偏离了这里的设计：没有用 OpenAI 官方 Python SDK，而是用 aiohttp 直接发 HTTP。**
+理由有三条，按重要性排：
+
+1. **不引入第二个 HTTP 栈。** 网关与 lens_agent 本身都是 aiohttp，装 `openai` 会把
+   httpx 一并拖进来。两套连接池、两套超时语义、两套代理配置，在一台 4 核 ARM 的
+   小机器上是纯粹的负担 —— 而我们只用到 `/chat/completions` 一个端点。
+2. **SSE 解析必须由我们自己掌握。** §7 表里的 `reasoning_content` 是与 `content`
+   同级的字段，SDK 的 `ChoiceDelta` 模型不认识它（它是 DeepSeek 的扩展）。
+   走 SDK 就得靠 `model_extra` 去捞，反而比直接读 JSON 更绕、更容易漏。
+   而"思维链绝不上屏"是这一层最硬的约束，解析路径必须是看得见的。
+3. **依赖面 = 攻击面。** 这是接外部大模型的进程，能少一个传递依赖就少一个。
+
+代价是我们自己维护 SSE 分帧与 `tool_calls` 的分片拼接。这两处都有直接的回归测试
+（`tests/test_agent.py` 的 `TestReasoningNeverReachesTheScreen` 与 `TestToolCallAssembly`），
+用假的 SSE 服务器喂真实抓到的分片序列。
 
 ---
 
@@ -490,14 +507,26 @@ HUD 出现 S5 工具态；**并实测 `stream=true` 与 `tool_calls` 能否并�
 
 ---
 
-## 13. 待确认与已知空白
+## 13. 实测结论与仍然存在的空白
 
-如实记录，不装作已解决：
+### 13.1 四条实测（M6 / P1，全部由直接调用真实端点得出）
 
-1. **`stream=true` 与 `tool_calls` 是否可并存**——DeepSeek 官方文档未说明。
-   眼镜依赖流式逐字上屏（S6），若二者互斥，`daily` / `capture` 这类带工具的 skill
-   将退化为「等工具跑完再一次性出文」。**P1 必须实测，结果回填本节。**
-2. **A1 的认证缺口**——单用户笔记本上「仅 loopback」够用；多用户服务器上不够。
+设计阶段留的四个问号，实现时逐条打靶。**这些不是读文档得来的，是跑出来的**，
+每条都在代码里有对应的常量与回归测试。
+
+| # | 问题 | 实测结果 | 落在哪 |
+|---|---|---|---|
+| 1 | `.env` 写的 `deepseek-v4-flash-0731` 能不能直接调？ | **不能，HTTP 400。** `0731` 是 checkpoint 名，不是调用串。`GET /models` 实际返回三个：`deepseek-v4-flash` / `deepseek-v4-pro` / `deepseek-v4-flash-vision-exp` | `DEFAULT_MODEL = "deepseek-v4-flash"`；§7 表里那一行是对的，**`.env` 是错的** |
+| 2 | `thinking:{"type":"disabled"}` 真的被接受吗？省多少？ | **接受。** 首 token 从 **5.75s 降到 2.94s**；更意外的是 `prompt_tokens` 从 94 降到 **15** —— 开着 thinking 时服务器会往前缀里注入约 79 个 token，这笔钱和这段延迟一直在偷偷付 | `THINKING_DISABLED`，每次请求都带 |
+| 3 | `reasoning_content` 长什么样、会不会混进正文？ | **是与 `content` 平级的独立字段，且确实出现在流式 delta 里**（实测抓到 114 字符）。它不会混进 `content`，但只要解析时"把 delta 里所有文本都当正文"就会泄漏 | `_consume()` 里只累加它的**长度**，不进正文、不进 sink；`TestReasoningNeverReachesTheScreen` 三条用例守着 |
+| 4 | `stream=true` 与 `tool_calls` 能不能并存？（§13 原第 1 条） | **能并存。** `finish_reason=tool_calls`，参数由 **13 个分片**拼出；带上工具定义只多花 0.17s。**但模型会先流一段散文再吐 tool_calls**，而且那段散文里带 markdown 反引号 | 分片按 `index` 归并；排版层强制剥 markdown 的兜底因此**不能去掉** |
+
+第 4 条是本节最重要的：它意味着 §10 的延迟预算成立，`daily` 这类带工具的 skill
+不必退化成「等工具跑完再一次性出文」。
+
+### 13.2 仍然存在的空白
+
+1. **A1 的认证缺口**——单用户笔记本上「仅 loopback」够用；多用户服务器上不够。
    是否加 token 取决于部署形态，未决。
 3. **skill 路由的关键词表**——第一版是手写规则，中文口语的覆盖率需要真实语料检验。
    已知风险：口音与 ASR 误转写会让前缀匹配失效（例如「记一下」被转成「几一下」）。

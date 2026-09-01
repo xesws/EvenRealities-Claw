@@ -133,8 +133,21 @@ function sourceOf(raw: unknown): InputSource {
   }
 }
 
+/** 把一个 SDK 没能解析的 audioPcm 载荷描述成一句人话，用于排障日志。 */
+function describeShape(raw: unknown): string {
+  if (typeof raw === 'string') return `字符串(${raw.length} 字符)`;
+  if (Array.isArray(raw)) return `数组(${raw.length} 项)`;
+  if (raw instanceof Uint8Array) return `Uint8Array(${raw.length} 字节)`;
+  if (raw && typeof raw === 'object') {
+    return `对象{${Object.keys(raw as object).slice(0, 4).join(',')}}`;
+  }
+  return typeof raw;
+}
+
 export class GlassesController {
   private readonly unsubscribers: Array<() => void> = [];
+  /** SDK 解析失败而被丢掉的音频帧数。只用于日志降噪与测试断言。 */
+  private pcmDropped = 0;
   private lastWritten: Partial<Record<keyof FrameContainers, string>> = {};
   private pending: FrameContainers | null = null;
   private flushTimer: number | null = null;
@@ -213,6 +226,42 @@ export class GlassesController {
 
   // ---------------------------------------------------------------- 事件
 
+  /**
+   * 交付一帧 PCM。**这里刻意不做载荷归一**，因为 SDK 已经做完了。
+   *
+   * `audioPcm` 在宿主侧是 Flutter 的 `Uint8List`，经 JSON 之后可能是 `number[]`、
+   * 也可能是 base64 字符串——SDK 自己的 `index.d.ts:1050` 就是这么写的，而它声明的
+   * 类型却是 `Uint8Array`。实测结论：`evenHubEventFromJson` 把 `number[]` / base64 /
+   * `Uint8Array` 三种载荷、`jsonData` / `data` / 数组三种信封**全部**归一成
+   * `Uint8Array`（契约钉在 `tests/audio-pcm.test.ts`）。再写一遍归一函数只是重复实现，
+   * 而且会掩盖真正的失败模式——
+   *
+   * 会出事的是 SDK **认不出**的载荷形状（实测：Node 的 `{type:'Buffer',data:[…]}`）：
+   * 此时 `event.audioEvent` 整个是 undefined，音频被**静默丢弃**。用户说了一整句话、
+   * 一个字节都没上行，而网关那头只会报「麦克风没有声音」——根因完全查不到。
+   * 判据在 `jsonData` 里：原始载荷带 audioPcm、解析结果却没有 ⇒ 是解析失败，不是没音频。
+   */
+  private deliverPcm(event: {
+    audioEvent?: { audioPcm?: Uint8Array };
+    jsonData?: Record<string, unknown>;
+  }): void {
+    const pcm = event.audioEvent?.audioPcm;
+    if (pcm && pcm.length > 0) {
+      this.events.onAudioPcm?.(pcm);
+      return;
+    }
+    if (pcm === undefined && event.jsonData?.audioPcm != null) {
+      this.pcmDropped += 1;
+      // 每帧都喊会把控制台淹掉（16kHz 下 200ms 一帧），只在头几帧与整十倍处出声
+      if (this.pcmDropped <= 3 || this.pcmDropped % 100 === 0) {
+        console.warn(
+          `[glasses] 宿主发来了音频但 SDK 解不出来，已丢弃第 ${this.pcmDropped} 帧。` +
+            `载荷形状：${describeShape(event.jsonData.audioPcm)}`,
+        );
+      }
+    }
+  }
+
   private onHubEvent(event: {
     audioEvent?: { audioPcm?: Uint8Array };
     sysEvent?: { eventType?: unknown; eventSource?: unknown };
@@ -221,8 +270,7 @@ export class GlassesController {
     /** 宿主发来的**原始载荷**，SDK 原样透传。见下方对"缺字段 vs 无法识别"的判别。 */
     jsonData?: Record<string, unknown>;
   }): void {
-    const pcm = event.audioEvent?.audioPcm;
-    if (pcm && pcm.length > 0) this.events.onAudioPcm?.(pcm);
+    this.deliverPcm(event);
 
     const body = event.sysEvent ?? event.textEvent ?? event.listEvent;
     if (!body) return;

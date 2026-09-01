@@ -1,11 +1,13 @@
 """演示用的 OpenClaw 网关替身（本地无真 agent 时使用）。
 
-说的是与真工部网关同一套 protocol v3（见 gateway/lens_gateway/openclaw.py）：
+说的是与真工部网关同一套 protocol v3（见 gateway/lens_gateway/providers/openclaw.py）：
   connect  → hello-ok
   chat.send → res{runId}，随后流式 event:chat（delta×N → final）
   chat.abort → res{ok}
 
 与真 agent 的唯一区别：回复内容来自本文件的剧本，不来自模型。
+**它在握手时自报 `fixture: true`** —— 网关据此在 `/healthz` 标注、并在眼镜状态条
+上显示「工?」。替身不伪装成真 agent，是「演示不能有 fake」这条要求可被验证的前提。
 其余每一环（麦克风、faster-whisper 转写、HUD 状态机、折行分页、BLE 渲染节流）
 全部走真实代码路径。
 
@@ -136,7 +138,14 @@ class FakeGateway:
         params: dict[str, Any] = frame.get("params") or {}
 
         if method == "connect":
-            await self._res(ws, req_id, {"protocol": 3, "server": "fake-openclaw/0.1.0"})
+            # ★ W6：**自报家门**。真的 OpenClaw 网关不会发 `fixture`，所以网关
+            # 一握手就知道自己接的是替身，`/healthz` 能当场自证、HUD 状态条会带「?」。
+            # 替身主动暴露自己的身份，才谈得上"演示里没有 fake"这句话可被验证。
+            await self._res(ws, req_id, {
+                "protocol": 3,
+                "server": {"name": "fake-openclaw", "version": "0.1.0", "fixture": True},
+                "fixture": True,
+            })
             print("[fake-openclaw] connect 握手完成")
 
         elif method == "chat.send":

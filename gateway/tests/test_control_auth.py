@@ -100,7 +100,11 @@ class TestControlAuth:
         resp = await client.get("/healthz")
         assert resp.status == 200
         body = await resp.json()
-        assert set(body) == {"ok", "asr_ready", "openclaw", "devices", "sessions"}
+        assert set(body) == {"ok", "asr_ready", "openclaw", "agent", "devices", "sessions"}
+        # W6：agent 溯源必须在**公开**的 /healthz 上 —— 演示时任何人都能当场
+        # curl 一下自证「后面挂的不是替身」，需要密钥就失去意义了
+        assert set(body["agent"]) == {"connected", "backend", "name", "version",
+                                      "model", "endpoint", "production", "note"}
 
 
 class TestClientKey:

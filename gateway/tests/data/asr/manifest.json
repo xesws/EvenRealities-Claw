@@ -1,0 +1,65 @@
+{
+  "corpus": [
+    {
+      "audio": "01_domain.mp3",
+      "text": "眼镜链路现在通不通",
+      "voice": "zh-CN-XiaoxiaoNeural",
+      "tag": "domain"
+    },
+    {
+      "audio": "02_domain.mp3",
+      "text": "帮我问一下工部，网关还活着吗",
+      "voice": "zh-CN-YunxiNeural",
+      "tag": "domain"
+    },
+    {
+      "audio": "03_daily.mp3",
+      "text": "现在几点了",
+      "voice": "zh-CN-XiaoxiaoNeural",
+      "tag": "daily"
+    },
+    {
+      "audio": "04_daily.mp3",
+      "text": "今天是星期几",
+      "voice": "zh-CN-YunxiNeural",
+      "tag": "daily"
+    },
+    {
+      "audio": "05_ask.mp3",
+      "text": "用一句话说明什么是光的折射",
+      "voice": "zh-CN-XiaoxiaoNeural",
+      "tag": "ask"
+    },
+    {
+      "audio": "06_ask.mp3",
+      "text": "北京到上海大概有多远",
+      "voice": "zh-TW-HsiaoChenNeural",
+      "tag": "ask"
+    },
+    {
+      "audio": "07_mixed.mp3",
+      "text": "把音量调到百分之六十",
+      "voice": "zh-CN-YunxiNeural",
+      "tag": "mixed"
+    },
+    {
+      "audio": "08_mixed.mp3",
+      "text": "OpenClaw 的版本号是多少",
+      "voice": "zh-CN-XiaoxiaoNeural",
+      "tag": "mixed"
+    },
+    {
+      "audio": "09_short.mp3",
+      "text": "停",
+      "voice": "zh-CN-XiaoxiaoNeural",
+      "tag": "short"
+    },
+    {
+      "audio": "10_short.mp3",
+      "text": "再说一遍",
+      "voice": "zh-CN-YunxiNeural",
+      "tag": "short"
+    }
+  ],
+  "note": "ground truth 为 TTS 的输入文本；CER 阈值见 tests/test_asr_quality.py"
+}

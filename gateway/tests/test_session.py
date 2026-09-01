@@ -11,6 +11,7 @@ import time
 import pytest
 
 from lens_gateway.config import Config
+from lens_gateway.providers import AgentInfo
 from lens_gateway.session import DeviceSession
 from tests.test_device import Sink, make_config
 
@@ -29,15 +30,49 @@ class FakeAsr:
 
 
 class FakeClaw:
-    def __init__(self, cfg) -> None:
+    """实现**完整**的 `AgentProvider` 契约。
+
+    这里必须逐项实现，不能只挑用得到的：替身少一项，生产代码调到它时抛的
+    `AttributeError` 往往会被某个 `except Exception` 吞掉，于是测试全绿、
+    真机上那条分支从没被走通过。这个类以前就缺 `abort` / `ensure_connected` /
+    `close` —— 而 `VoicePipeline.abort()` 恰好把异常吞了。
+
+    `injects_style=True` 对应 openclaw 那一档（网关注入小屏风格）。
+    """
+
+    injects_style = True
+
+    def __init__(self, cfg, *, production: bool = True, connected: bool = True) -> None:
         self.cfg = cfg
         self.sent: list[tuple[str, str]] = []
+        self.aborted: list[str] = []
+        self.closed = False
+        self.connect_calls = 0
+        self.connected = asyncio.Event()
+        if connected:
+            self.connected.set()
+        self._info = AgentInfo(backend="openclaw", name="测试", endpoint="ws://x",
+                               production=production)
+
+    def info(self) -> AgentInfo:
+        return self._info
 
     def session_busy(self, key: str) -> bool:
         return False
 
-    async def chat_send(self, key: str, message: str, on_event) -> None:
+    async def ensure_connected(self) -> None:
+        self.connect_calls += 1
+
+    async def close(self) -> None:
+        self.closed = True
+
+    async def chat_send(self, key: str, message: str, on_event,
+                        timeout_ms: int = 180_000) -> str:
         self.sent.append((key, message))
+        return "run_fake"
+
+    async def abort(self, key: str) -> None:
+        self.aborted.append(key)
 
 
 @pytest.fixture()
@@ -242,3 +277,29 @@ class TestAsrWarmupIdempotence:
         assert eng._lock.locked() is False
         await eng.warmup()
         assert eng._lock.locked() is False
+
+
+class TestProviderContract:
+    """替身与生产实现必须是同一个契约 —— 否则测试保护的是一个不存在的系统。"""
+
+    def test_fake_claw_satisfies_the_protocol(self):
+        from lens_gateway.providers import AgentProvider
+        cfg = make_config()
+        assert isinstance(FakeClaw(cfg.openclaw), AgentProvider)
+
+    def test_fake_claw_has_every_method_the_real_ones_have(self):
+        from lens_gateway.providers.lens import LensAgentClient
+        from lens_gateway.providers.openclaw import OpenClawClient
+        required = {n for n in dir(LensAgentClient) if not n.startswith("_")}
+        required &= {n for n in dir(OpenClawClient) if not n.startswith("_")}
+        missing = required - set(dir(FakeClaw))
+        assert not missing, f"替身缺少这些方法，被测代码调到它们时会抛 AttributeError：{missing}"
+
+    async def test_abort_really_reaches_the_provider(self, session):
+        """回归：`FakeClaw` 以前没有 `abort`，而 `VoicePipeline.abort` 把异常吞了 ——
+        「打断真的传到了 agent」这件事从来没被验证过。"""
+        sink = Sink()
+        session.attach(sink)
+        await session.voice.dispatch("先问一句")
+        await session.voice.abort()
+        assert session.claw.aborted == [session.session_key]

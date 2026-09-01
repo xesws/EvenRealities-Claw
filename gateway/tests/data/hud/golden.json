@@ -1,0 +1,1252 @@
+{
+  "happy_path_long": [
+    {
+      "type": "frame",
+      "seq": 2,
+      "state": "S2",
+      "containers": {
+        "status": "工 ● 聆听 0:00",
+        "body": "",
+        "foot": ""
+      },
+      "meta": {
+        "rec": true,
+        "agent": "工部",
+        "page": {
+          "cur": 1,
+          "total": 1
+        }
+      }
+    },
+    {
+      "type": "frame",
+      "seq": 3,
+      "state": "S3",
+      "containers": {
+        "status": "工 → 转写中",
+        "body": "",
+        "foot": ""
+      },
+      "meta": {
+        "rec": false,
+        "agent": "工部",
+        "page": {
+          "cur": 1,
+          "total": 1
+        }
+      }
+    },
+    {
+      "type": "frame",
+      "seq": 4,
+      "state": "S3",
+      "containers": {
+        "status": "工 → 工部",
+        "body": "眼镜的屏幕多大",
+        "foot": ""
+      },
+      "meta": {
+        "rec": false,
+        "agent": "工部",
+        "page": {
+          "cur": 1,
+          "total": 1
+        }
+      }
+    },
+    {
+      "type": "frame",
+      "seq": 5,
+      "state": "S4",
+      "containers": {
+        "status": "工 ◐ 思考 0s",
+        "body": "眼镜的屏幕多大",
+        "foot": ""
+      },
+      "meta": {
+        "rec": false,
+        "agent": "工部",
+        "page": {
+          "cur": 1,
+          "total": 1
+        }
+      }
+    },
+    {
+      "type": "frame",
+      "seq": 6,
+      "state": "S6",
+      "containers": {
+        "status": "工 ▶ 回答",
+        "body": "G2 的可寻址画布是每只眼 576×288 像素，左上角为原点，X 向\n右、Y 向",
+        "foot": ""
+      },
+      "meta": {
+        "rec": false,
+        "agent": "工部",
+        "page": {
+          "cur": 1,
+          "total": 1
+        }
+      }
+    },
+    {
+      "type": "frame",
+      "seq": 7,
+      "state": "S6",
+      "containers": {
+        "status": "工 ▶ 回答",
+        "body": "G2 的可寻址画布是每只眼 576×288 像素，左上角为原点，X 向\n右、Y 向下。行高固定 27px，所以正文区 216px 正好八行。字体\n是非等宽的 LVGL 字体，没有字号控",
+        "foot": ""
+      },
+      "meta": {
+        "rec": false,
+        "agent": "工部",
+        "page": {
+          "cur": 1,
+          "total": 1
+        }
+      }
+    },
+    {
+      "type": "frame",
+      "seq": 8,
+      "state": "S7",
+      "containers": {
+        "status": "工 √ 完成",
+        "body": "…Capture 置为 1，否则整页建立会失\n败。建页只能调用一次 createStartUpPageContainer，之后所有改\n动都要走 rebuildPageContainer。麦克风是四麦阵列，单路 16kHz \nPCM；触控在两侧镜腿都有，还可以外接 R1 戒指。",
+        "foot": "‹ 2/2"
+      },
+      "meta": {
+        "rec": false,
+        "agent": "工部",
+        "page": {
+          "cur": 2,
+          "total": 2
+        }
+      }
+    }
+  ],
+  "happy_path_short": [
+    {
+      "type": "frame",
+      "seq": 2,
+      "state": "S2",
+      "containers": {
+        "status": "工 ● 聆听 0:00",
+        "body": "",
+        "foot": ""
+      },
+      "meta": {
+        "rec": true,
+        "agent": "工部",
+        "page": {
+          "cur": 1,
+          "total": 1
+        }
+      }
+    },
+    {
+      "type": "frame",
+      "seq": 3,
+      "state": "S3",
+      "containers": {
+        "status": "工 → 转写中",
+        "body": "",
+        "foot": ""
+      },
+      "meta": {
+        "rec": false,
+        "agent": "工部",
+        "page": {
+          "cur": 1,
+          "total": 1
+        }
+      }
+    },
+    {
+      "type": "frame",
+      "seq": 4,
+      "state": "S3",
+      "containers": {
+        "status": "工 → 工部",
+        "body": "今天天气怎么样",
+        "foot": ""
+      },
+      "meta": {
+        "rec": false,
+        "agent": "工部",
+        "page": {
+          "cur": 1,
+          "total": 1
+        }
+      }
+    },
+    {
+      "type": "frame",
+      "seq": 5,
+      "state": "S4",
+      "containers": {
+        "status": "工 ◐ 思考 0s",
+        "body": "今天天气怎么样",
+        "foot": ""
+      },
+      "meta": {
+        "rec": false,
+        "agent": "工部",
+        "page": {
+          "cur": 1,
+          "total": 1
+        }
+      }
+    },
+    {
+      "type": "frame",
+      "seq": 6,
+      "state": "S7",
+      "containers": {
+        "status": "工 √ 完成",
+        "body": "今天晴，二十六度。",
+        "foot": ""
+      },
+      "meta": {
+        "rec": false,
+        "agent": "工部",
+        "page": {
+          "cur": 1,
+          "total": 1
+        }
+      }
+    }
+  ],
+  "with_tool_call": [
+    {
+      "type": "frame",
+      "seq": 2,
+      "state": "S2",
+      "containers": {
+        "status": "工 ● 聆听 0:00",
+        "body": "",
+        "foot": ""
+      },
+      "meta": {
+        "rec": true,
+        "agent": "工部",
+        "page": {
+          "cur": 1,
+          "total": 1
+        }
+      }
+    },
+    {
+      "type": "frame",
+      "seq": 3,
+      "state": "S3",
+      "containers": {
+        "status": "工 → 转写中",
+        "body": "",
+        "foot": ""
+      },
+      "meta": {
+        "rec": false,
+        "agent": "工部",
+        "page": {
+          "cur": 1,
+          "total": 1
+        }
+      }
+    },
+    {
+      "type": "frame",
+      "seq": 4,
+      "state": "S3",
+      "containers": {
+        "status": "工 → 工部",
+        "body": "现在几点了",
+        "foot": ""
+      },
+      "meta": {
+        "rec": false,
+        "agent": "工部",
+        "page": {
+          "cur": 1,
+          "total": 1
+        }
+      }
+    },
+    {
+      "type": "frame",
+      "seq": 5,
+      "state": "S4",
+      "containers": {
+        "status": "工 ◐ 思考 0s",
+        "body": "现在几点了",
+        "foot": ""
+      },
+      "meta": {
+        "rec": false,
+        "agent": "工部",
+        "page": {
+          "cur": 1,
+          "total": 1
+        }
+      }
+    },
+    {
+      "type": "frame",
+      "seq": 6,
+      "state": "S5",
+      "containers": {
+        "status": "工 ◆ 查时间",
+        "body": "正在查当前时间",
+        "foot": ""
+      },
+      "meta": {
+        "rec": false,
+        "agent": "工部",
+        "page": {
+          "cur": 1,
+          "total": 1
+        }
+      }
+    },
+    {
+      "type": "frame",
+      "seq": 7,
+      "state": "S7",
+      "containers": {
+        "status": "工 √ 完成",
+        "body": "现在是下午三点十七分。",
+        "foot": ""
+      },
+      "meta": {
+        "rec": false,
+        "agent": "工部",
+        "page": {
+          "cur": 1,
+          "total": 1
+        }
+      }
+    }
+  ],
+  "paging_after_answer": [
+    {
+      "type": "frame",
+      "seq": 2,
+      "state": "S2",
+      "containers": {
+        "status": "工 ● 聆听 0:00",
+        "body": "",
+        "foot": ""
+      },
+      "meta": {
+        "rec": true,
+        "agent": "工部",
+        "page": {
+          "cur": 1,
+          "total": 1
+        }
+      }
+    },
+    {
+      "type": "frame",
+      "seq": 3,
+      "state": "S3",
+      "containers": {
+        "status": "工 → 转写中",
+        "body": "",
+        "foot": ""
+      },
+      "meta": {
+        "rec": false,
+        "agent": "工部",
+        "page": {
+          "cur": 1,
+          "total": 1
+        }
+      }
+    },
+    {
+      "type": "frame",
+      "seq": 4,
+      "state": "S3",
+      "containers": {
+        "status": "工 → 工部",
+        "body": "眼镜的屏幕多大",
+        "foot": ""
+      },
+      "meta": {
+        "rec": false,
+        "agent": "工部",
+        "page": {
+          "cur": 1,
+          "total": 1
+        }
+      }
+    },
+    {
+      "type": "frame",
+      "seq": 5,
+      "state": "S4",
+      "containers": {
+        "status": "工 ◐ 思考 0s",
+        "body": "眼镜的屏幕多大",
+        "foot": ""
+      },
+      "meta": {
+        "rec": false,
+        "agent": "工部",
+        "page": {
+          "cur": 1,
+          "total": 1
+        }
+      }
+    },
+    {
+      "type": "frame",
+      "seq": 6,
+      "state": "S6",
+      "containers": {
+        "status": "工 ▶ 回答",
+        "body": "G2 的可寻址画布是每只眼 576×288 像素，左上角为原点，X 向\n右、Y 向",
+        "foot": ""
+      },
+      "meta": {
+        "rec": false,
+        "agent": "工部",
+        "page": {
+          "cur": 1,
+          "total": 1
+        }
+      }
+    },
+    {
+      "type": "frame",
+      "seq": 7,
+      "state": "S6",
+      "containers": {
+        "status": "工 ▶ 回答",
+        "body": "G2 的可寻址画布是每只眼 576×288 像素，左上角为原点，X 向\n右、Y 向下。行高固定 27px，所以正文区 216px 正好八行。字体\n是非等宽的 LVGL 字体，没有字号控",
+        "foot": ""
+      },
+      "meta": {
+        "rec": false,
+        "agent": "工部",
+        "page": {
+          "cur": 1,
+          "total": 1
+        }
+      }
+    },
+    {
+      "type": "frame",
+      "seq": 8,
+      "state": "S7",
+      "containers": {
+        "status": "工 √ 完成",
+        "body": "…Capture 置为 1，否则整页建立会失\n败。建页只能调用一次 createStartUpPageContainer，之后所有改\n动都要走 rebuildPageContainer。麦克风是四麦阵列，单路 16kHz \nPCM；触控在两侧镜腿都有，还可以外接 R1 戒指。",
+        "foot": "‹ 2/2"
+      },
+      "meta": {
+        "rec": false,
+        "agent": "工部",
+        "page": {
+          "cur": 2,
+          "total": 2
+        }
+      }
+    },
+    {
+      "type": "frame",
+      "seq": 9,
+      "state": "S7",
+      "containers": {
+        "status": "工 √ 完成",
+        "body": "G2 的可寻址画布是每只眼 576×288 像素，左上角为原点，X 向\n右、Y 向下。行高固定 27px，所以正文区 216px 正好八行。字体\n是非等宽的 LVGL 字体，没有字号控制，也不能右对齐，所谓居中\n只是拿空格去凑。文本亮度只有 0 到 4 五级，和边框的 0 到 15 \n是两套完全不同的刻度。字库外的字符不会显示豆腐块，而是直\n接什么都不画，所以生僻符号和 emoji 一律要避开。每页最多十二\n个容器，其中文本容器不超过八个，图片容器不超过四个，并且\n必须恰好有一个容器把 isEventCapture 置为 1，否则整页建立会失",
+        "foot": "1/2 ›"
+      },
+      "meta": {
+        "rec": false,
+        "agent": "工部",
+        "page": {
+          "cur": 1,
+          "total": 2
+        }
+      }
+    },
+    {
+      "type": "frame",
+      "seq": 10,
+      "state": "S7",
+      "containers": {
+        "status": "工 √ 完成",
+        "body": "…Capture 置为 1，否则整页建立会失\n败。建页只能调用一次 createStartUpPageContainer，之后所有改\n动都要走 rebuildPageContainer。麦克风是四麦阵列，单路 16kHz \nPCM；触控在两侧镜腿都有，还可以外接 R1 戒指。",
+        "foot": "‹ 2/2"
+      },
+      "meta": {
+        "rec": false,
+        "agent": "工部",
+        "page": {
+          "cur": 2,
+          "total": 2
+        }
+      }
+    }
+  ],
+  "misfire_too_short": [
+    {
+      "type": "frame",
+      "seq": 2,
+      "state": "S2",
+      "containers": {
+        "status": "工 ● 聆听 0:00",
+        "body": "",
+        "foot": ""
+      },
+      "meta": {
+        "rec": true,
+        "agent": "工部",
+        "page": {
+          "cur": 1,
+          "total": 1
+        }
+      }
+    },
+    {
+      "type": "frame",
+      "seq": 3,
+      "state": "S0",
+      "containers": {
+        "status": "·",
+        "body": "",
+        "foot": ""
+      },
+      "meta": {
+        "rec": false,
+        "agent": "工部",
+        "page": {
+          "cur": 1,
+          "total": 1
+        }
+      }
+    }
+  ],
+  "asr_heard_nothing": [
+    {
+      "type": "frame",
+      "seq": 2,
+      "state": "S2",
+      "containers": {
+        "status": "工 ● 聆听 0:00",
+        "body": "",
+        "foot": ""
+      },
+      "meta": {
+        "rec": true,
+        "agent": "工部",
+        "page": {
+          "cur": 1,
+          "total": 1
+        }
+      }
+    },
+    {
+      "type": "frame",
+      "seq": 3,
+      "state": "S3",
+      "containers": {
+        "status": "工 → 转写中",
+        "body": "",
+        "foot": ""
+      },
+      "meta": {
+        "rec": false,
+        "agent": "工部",
+        "page": {
+          "cur": 1,
+          "total": 1
+        }
+      }
+    },
+    {
+      "type": "frame",
+      "seq": 4,
+      "state": "S8",
+      "containers": {
+        "status": "工 × 未听清",
+        "body": "没听清，请再说一次",
+        "foot": ""
+      },
+      "meta": {
+        "rec": false,
+        "agent": "工部",
+        "page": {
+          "cur": 1,
+          "total": 1
+        }
+      }
+    }
+  ],
+  "agent_busy": [
+    {
+      "type": "frame",
+      "seq": 2,
+      "state": "S2",
+      "containers": {
+        "status": "工 ● 聆听 0:00",
+        "body": "",
+        "foot": ""
+      },
+      "meta": {
+        "rec": true,
+        "agent": "工部",
+        "page": {
+          "cur": 1,
+          "total": 1
+        }
+      }
+    },
+    {
+      "type": "frame",
+      "seq": 3,
+      "state": "S3",
+      "containers": {
+        "status": "工 → 转写中",
+        "body": "",
+        "foot": ""
+      },
+      "meta": {
+        "rec": false,
+        "agent": "工部",
+        "page": {
+          "cur": 1,
+          "total": 1
+        }
+      }
+    },
+    {
+      "type": "frame",
+      "seq": 4,
+      "state": "S8",
+      "containers": {
+        "status": "工 ！ 占用",
+        "body": "上一条还在跑\n点「打断」后再说",
+        "foot": ""
+      },
+      "meta": {
+        "rec": false,
+        "agent": "工部",
+        "page": {
+          "cur": 1,
+          "total": 1
+        }
+      }
+    }
+  ],
+  "agent_error": [
+    {
+      "type": "frame",
+      "seq": 2,
+      "state": "S2",
+      "containers": {
+        "status": "工 ● 聆听 0:00",
+        "body": "",
+        "foot": ""
+      },
+      "meta": {
+        "rec": true,
+        "agent": "工部",
+        "page": {
+          "cur": 1,
+          "total": 1
+        }
+      }
+    },
+    {
+      "type": "frame",
+      "seq": 3,
+      "state": "S3",
+      "containers": {
+        "status": "工 → 转写中",
+        "body": "",
+        "foot": ""
+      },
+      "meta": {
+        "rec": false,
+        "agent": "工部",
+        "page": {
+          "cur": 1,
+          "total": 1
+        }
+      }
+    },
+    {
+      "type": "frame",
+      "seq": 4,
+      "state": "S3",
+      "containers": {
+        "status": "工 → 工部",
+        "body": "在吗",
+        "foot": ""
+      },
+      "meta": {
+        "rec": false,
+        "agent": "工部",
+        "page": {
+          "cur": 1,
+          "total": 1
+        }
+      }
+    },
+    {
+      "type": "frame",
+      "seq": 5,
+      "state": "S4",
+      "containers": {
+        "status": "工 ◐ 思考 0s",
+        "body": "在吗",
+        "foot": ""
+      },
+      "meta": {
+        "rec": false,
+        "agent": "工部",
+        "page": {
+          "cur": 1,
+          "total": 1
+        }
+      }
+    },
+    {
+      "type": "frame",
+      "seq": 6,
+      "state": "S8",
+      "containers": {
+        "status": "工 × 出错",
+        "body": "无法连接 agent\nConnection refused",
+        "foot": ""
+      },
+      "meta": {
+        "rec": false,
+        "agent": "工部",
+        "page": {
+          "cur": 1,
+          "total": 1
+        }
+      }
+    }
+  ],
+  "agent_reports_error": [
+    {
+      "type": "frame",
+      "seq": 2,
+      "state": "S2",
+      "containers": {
+        "status": "工 ● 聆听 0:00",
+        "body": "",
+        "foot": ""
+      },
+      "meta": {
+        "rec": true,
+        "agent": "工部",
+        "page": {
+          "cur": 1,
+          "total": 1
+        }
+      }
+    },
+    {
+      "type": "frame",
+      "seq": 3,
+      "state": "S3",
+      "containers": {
+        "status": "工 → 转写中",
+        "body": "",
+        "foot": ""
+      },
+      "meta": {
+        "rec": false,
+        "agent": "工部",
+        "page": {
+          "cur": 1,
+          "total": 1
+        }
+      }
+    },
+    {
+      "type": "frame",
+      "seq": 4,
+      "state": "S3",
+      "containers": {
+        "status": "工 → 工部",
+        "body": "在吗",
+        "foot": ""
+      },
+      "meta": {
+        "rec": false,
+        "agent": "工部",
+        "page": {
+          "cur": 1,
+          "total": 1
+        }
+      }
+    },
+    {
+      "type": "frame",
+      "seq": 5,
+      "state": "S4",
+      "containers": {
+        "status": "工 ◐ 思考 0s",
+        "body": "在吗",
+        "foot": ""
+      },
+      "meta": {
+        "rec": false,
+        "agent": "工部",
+        "page": {
+          "cur": 1,
+          "total": 1
+        }
+      }
+    },
+    {
+      "type": "frame",
+      "seq": 6,
+      "state": "S8",
+      "containers": {
+        "status": "工 × 出错",
+        "body": "模型返回 429，稍后重试\n按住说话可重试",
+        "foot": ""
+      },
+      "meta": {
+        "rec": false,
+        "agent": "工部",
+        "page": {
+          "cur": 1,
+          "total": 1
+        }
+      }
+    }
+  ],
+  "untrusted_agent": [
+    {
+      "type": "frame",
+      "seq": 2,
+      "state": "S2",
+      "containers": {
+        "status": "工? ● 聆听 0:00",
+        "body": "",
+        "foot": ""
+      },
+      "meta": {
+        "rec": true,
+        "agent": "工部",
+        "page": {
+          "cur": 1,
+          "total": 1
+        }
+      }
+    },
+    {
+      "type": "frame",
+      "seq": 3,
+      "state": "S3",
+      "containers": {
+        "status": "工? → 转写中",
+        "body": "",
+        "foot": ""
+      },
+      "meta": {
+        "rec": false,
+        "agent": "工部",
+        "page": {
+          "cur": 1,
+          "total": 1
+        }
+      }
+    },
+    {
+      "type": "frame",
+      "seq": 4,
+      "state": "S3",
+      "containers": {
+        "status": "工? → 工部",
+        "body": "今天天气怎么样",
+        "foot": ""
+      },
+      "meta": {
+        "rec": false,
+        "agent": "工部",
+        "page": {
+          "cur": 1,
+          "total": 1
+        }
+      }
+    },
+    {
+      "type": "frame",
+      "seq": 5,
+      "state": "S4",
+      "containers": {
+        "status": "工? ◐ 思考 0s",
+        "body": "今天天气怎么样",
+        "foot": ""
+      },
+      "meta": {
+        "rec": false,
+        "agent": "工部",
+        "page": {
+          "cur": 1,
+          "total": 1
+        }
+      }
+    },
+    {
+      "type": "frame",
+      "seq": 6,
+      "state": "S7",
+      "containers": {
+        "status": "工? √ 完成",
+        "body": "今天晴，二十六度。",
+        "foot": ""
+      },
+      "meta": {
+        "rec": false,
+        "agent": "工部",
+        "page": {
+          "cur": 1,
+          "total": 1
+        }
+      }
+    }
+  ],
+  "low_battery": [
+    {
+      "type": "frame",
+      "seq": 2,
+      "state": "S2",
+      "containers": {
+        "status": "工 ● 聆听 0:00",
+        "body": "",
+        "foot": "▁11%"
+      },
+      "meta": {
+        "rec": true,
+        "agent": "工部",
+        "page": {
+          "cur": 1,
+          "total": 1
+        }
+      }
+    },
+    {
+      "type": "frame",
+      "seq": 3,
+      "state": "S3",
+      "containers": {
+        "status": "工 → 转写中",
+        "body": "",
+        "foot": ""
+      },
+      "meta": {
+        "rec": false,
+        "agent": "工部",
+        "page": {
+          "cur": 1,
+          "total": 1
+        }
+      }
+    },
+    {
+      "type": "frame",
+      "seq": 4,
+      "state": "S3",
+      "containers": {
+        "status": "工 → 工部",
+        "body": "今天天气怎么样",
+        "foot": ""
+      },
+      "meta": {
+        "rec": false,
+        "agent": "工部",
+        "page": {
+          "cur": 1,
+          "total": 1
+        }
+      }
+    },
+    {
+      "type": "frame",
+      "seq": 5,
+      "state": "S4",
+      "containers": {
+        "status": "工 ◐ 思考 0s",
+        "body": "今天天气怎么样",
+        "foot": ""
+      },
+      "meta": {
+        "rec": false,
+        "agent": "工部",
+        "page": {
+          "cur": 1,
+          "total": 1
+        }
+      }
+    },
+    {
+      "type": "frame",
+      "seq": 6,
+      "state": "S7",
+      "containers": {
+        "status": "工 √ 完成",
+        "body": "今天晴，二十六度。",
+        "foot": ""
+      },
+      "meta": {
+        "rec": false,
+        "agent": "工部",
+        "page": {
+          "cur": 1,
+          "total": 1
+        }
+      }
+    }
+  ],
+  "abort_midway": [
+    {
+      "type": "frame",
+      "seq": 2,
+      "state": "S2",
+      "containers": {
+        "status": "工 ● 聆听 0:00",
+        "body": "",
+        "foot": ""
+      },
+      "meta": {
+        "rec": true,
+        "agent": "工部",
+        "page": {
+          "cur": 1,
+          "total": 1
+        }
+      }
+    },
+    {
+      "type": "frame",
+      "seq": 3,
+      "state": "S3",
+      "containers": {
+        "status": "工 → 转写中",
+        "body": "",
+        "foot": ""
+      },
+      "meta": {
+        "rec": false,
+        "agent": "工部",
+        "page": {
+          "cur": 1,
+          "total": 1
+        }
+      }
+    },
+    {
+      "type": "frame",
+      "seq": 4,
+      "state": "S3",
+      "containers": {
+        "status": "工 → 工部",
+        "body": "眼镜的屏幕多大",
+        "foot": ""
+      },
+      "meta": {
+        "rec": false,
+        "agent": "工部",
+        "page": {
+          "cur": 1,
+          "total": 1
+        }
+      }
+    },
+    {
+      "type": "frame",
+      "seq": 5,
+      "state": "S4",
+      "containers": {
+        "status": "工 ◐ 思考 0s",
+        "body": "眼镜的屏幕多大",
+        "foot": ""
+      },
+      "meta": {
+        "rec": false,
+        "agent": "工部",
+        "page": {
+          "cur": 1,
+          "total": 1
+        }
+      }
+    },
+    {
+      "type": "frame",
+      "seq": 6,
+      "state": "S6",
+      "containers": {
+        "status": "工 ▶ 回答",
+        "body": "G2 的可寻址画布是每只眼 576×288 像素，左上角为原点，X 向\n右、Y 向",
+        "foot": ""
+      },
+      "meta": {
+        "rec": false,
+        "agent": "工部",
+        "page": {
+          "cur": 1,
+          "total": 1
+        }
+      }
+    },
+    {
+      "type": "frame",
+      "seq": 7,
+      "state": "S6",
+      "containers": {
+        "status": "工 ▶ 回答",
+        "body": "G2 的可寻址画布是每只眼 576×288 像素，左上角为原点，X 向\n右、Y 向下。行高固定 27px，所以正文区 216px 正好八行。字体\n是非等宽的 LVGL 字体，没有字号控",
+        "foot": ""
+      },
+      "meta": {
+        "rec": false,
+        "agent": "工部",
+        "page": {
+          "cur": 1,
+          "total": 1
+        }
+      }
+    },
+    {
+      "type": "frame",
+      "seq": 8,
+      "state": "S7",
+      "containers": {
+        "status": "工 ■ 已打断",
+        "body": "G2 的可寻址画布是每只眼 576×288 像素，左上角为原点，X 向\n右、Y 向下。行高固定 27px，所以正文区 216px 正好八行。字体\n是非等宽的 LVGL 字体，没有字号控",
+        "foot": ""
+      },
+      "meta": {
+        "rec": false,
+        "agent": "工部",
+        "page": {
+          "cur": 1,
+          "total": 1
+        }
+      }
+    }
+  ],
+  "markdown_leaks_from_model": [
+    {
+      "type": "frame",
+      "seq": 2,
+      "state": "S2",
+      "containers": {
+        "status": "工 ● 聆听 0:00",
+        "body": "",
+        "foot": ""
+      },
+      "meta": {
+        "rec": true,
+        "agent": "工部",
+        "page": {
+          "cur": 1,
+          "total": 1
+        }
+      }
+    },
+    {
+      "type": "frame",
+      "seq": 3,
+      "state": "S3",
+      "containers": {
+        "status": "工 → 转写中",
+        "body": "",
+        "foot": ""
+      },
+      "meta": {
+        "rec": false,
+        "agent": "工部",
+        "page": {
+          "cur": 1,
+          "total": 1
+        }
+      }
+    },
+    {
+      "type": "frame",
+      "seq": 4,
+      "state": "S3",
+      "containers": {
+        "status": "工 → 工部",
+        "body": "怎么装这个插件",
+        "foot": ""
+      },
+      "meta": {
+        "rec": false,
+        "agent": "工部",
+        "page": {
+          "cur": 1,
+          "total": 1
+        }
+      }
+    },
+    {
+      "type": "frame",
+      "seq": 5,
+      "state": "S4",
+      "containers": {
+        "status": "工 ◐ 思考 0s",
+        "body": "怎么装这个插件",
+        "foot": ""
+      },
+      "meta": {
+        "rec": false,
+        "agent": "工部",
+        "page": {
+          "cur": 1,
+          "total": 1
+        }
+      }
+    },
+    {
+      "type": "frame",
+      "seq": 6,
+      "state": "S7",
+      "containers": {
+        "status": "工 √ 完成",
+        "body": "详见 官方文档。",
+        "foot": "‹ 2/2"
+      },
+      "meta": {
+        "rec": false,
+        "agent": "工部",
+        "page": {
+          "cur": 2,
+          "total": 2
+        }
+      }
+    },
+    {
+      "type": "frame",
+      "seq": 7,
+      "state": "S7",
+      "containers": {
+        "status": "工 √ 完成",
+        "body": "安装步骤\n\n先跑 npm install，再执行 build。\n\nnpm run build\n• 第一步：装依赖\n• 第二步：打包\n",
+        "foot": "1/2 ›"
+      },
+      "meta": {
+        "rec": false,
+        "agent": "工部",
+        "page": {
+          "cur": 1,
+          "total": 2
+        }
+      }
+    }
+  ]
+}

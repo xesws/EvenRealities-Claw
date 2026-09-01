@@ -292,6 +292,23 @@ async def run_client() -> None:
         check("帧 containers 结构恒定",
               all(set(f["containers"]) == {"status", "body", "foot"} for f in frames))
 
+        # ---------------- 6b. W6 · agent 溯源：替身必须自己暴露 ----------------
+        # 「演示不能有 fake」这条要求只有在**替身无法伪装成真 agent**时才可验证。
+        # 本脚本用的正是替身，所以这里断言的是「它确实被识别出来并被公开标注」。
+        health = json.loads(urllib.request.urlopen(
+            f"http://127.0.0.1:{PORT}/healthz", timeout=5).read())
+        ag = health.get("agent") or {}
+        check("★ /healthz 公开 agent 溯源（无需密钥，演示时可当场自证）",
+              ag.get("connected") is True and ag.get("backend") == "openclaw",
+              f'backend={ag.get("backend")} name={ag.get("name")}')
+        check("★ 测试替身被如实标注为非生产 agent",
+              ag.get("production") is False and "替身" in (ag.get("note") or ""),
+              f'production={ag.get("production")} note={ag.get("note")}')
+        badges = {f["containers"]["status"].split(" ")[0] for f in frames
+                  if f["containers"]["status"]}
+        check("★ 眼镜状态条上带「?」标记（屏幕自己告状，不只是写在日志里）",
+              badges and all(b.endswith("?") for b in badges), " ".join(sorted(badges)))
+
         # ---------------- 7. 翻页（修 T3：原来只发了 reset，从没测过翻页）----------------
         # S7 落在末页（_on_reply_text 跟随模式 _page = total-1），因此先 prev 再 next。
         total = int(s7["containers"]["foot"].split("/")[-1].split()[0]) if "/" in s7["containers"]["foot"] else 1

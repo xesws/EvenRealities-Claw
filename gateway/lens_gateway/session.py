@@ -15,7 +15,7 @@ from typing import Awaitable, Callable
 from .asr import AsrEngine
 from .config import Config
 from .device import HudDevice, TelemetryStore, style_header
-from .openclaw import OpenClawClient
+from .providers import AgentProvider, agent_is_trusted
 from .voice import VoicePipeline
 
 log = logging.getLogger(__name__)
@@ -26,11 +26,16 @@ __all__ = ["DeviceSession", "style_header"]
 
 
 class DeviceSession:
-    def __init__(self, device_id: str, cfg: Config, asr: AsrEngine, claw: OpenClawClient):
+    def __init__(self, device_id: str, cfg: Config, asr: AsrEngine, claw: AgentProvider):
         self.device_id = device_id
         self.cfg = cfg
         self.session_key = f"lens:{device_id}"
         self.hud = HudDevice(device_id, cfg)
+        self.claw = claw
+        # W6：溯源徽记**每帧现算**。绑一个探针比在若干时机点上各取样一次可靠得多 ——
+        # 取样式写法必然留下时序窗口（冷启动、断线重连），而窗口里的那几帧
+        # 正好是替身在答话却不打标的时候。理由写在 `HudDevice.agent_production`。
+        self.hud.bind_agent_probe(lambda: agent_is_trusted(self.claw))
         self.telemetry = TelemetryStore(stale_seconds=cfg.composer.telemetry_stale_seconds)
         self.voice = VoicePipeline(self.hud, cfg, asr, claw, self.session_key)
 
@@ -71,6 +76,7 @@ class DeviceSession:
         """新 WS 绑定；返回 resume 帧。"""
         self._send = send
         self._pending_cmds.clear()   # 旧连接的未回执命令永远不会回来了
+        # W6 徽记不用在这里取样：探针已在 __init__ 绑好，每帧现算。
         return self.hud.attach(send)
 
     def detach(self) -> None:

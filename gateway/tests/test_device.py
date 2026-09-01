@@ -13,14 +13,16 @@ import time
 
 import pytest
 
-from lens_gateway.config import AsrConfig, ComposerConfig, Config, OpenClawConfig
+from lens_gateway.config import (AgentConfig, AsrConfig, ComposerConfig, Config,
+                                 OpenClawConfig)
 from lens_gateway.device import EXTERNAL_STATE, HudDevice, LeaseHeld, LeaseInvalid, style_header
 
 THROTTLE_MS = 120
 LONG_TEXT = "".join(f"第{i}段内容，用来把正文撑到多页，好让翻页有东西可翻。" for i in range(30))
 
 
-def make_config(**composer_over) -> Config:
+def make_config(*, agent: AgentConfig | None = None, asr_over: dict | None = None,
+                **composer_over) -> Config:
     """全字段显式构造，杜绝"测试其实在测默认值"。"""
     composer = dict(
         glyph_profile="symbol",
@@ -41,10 +43,15 @@ def make_config(**composer_over) -> Config:
         plugin_dist="",
         openclaw=OpenClawConfig(url="ws://127.0.0.1:1/none", config_path="/dev/null",
                                 agent_label="工", agent_name="工部"),
-        asr=AsrConfig(partial_model="tiny", final_model="base", language="zh",
-                      compute_type="int8", cpu_threads=1, hotwords="",
-                      partial_interval_ms=700, partial_tail_seconds=12.0,
-                      max_utterance_seconds=25.0),
+        asr=AsrConfig(**{**dict(partial_model="tiny", final_model="base", language="zh",
+                                compute_type="int8", cpu_threads=1, hotwords="",
+                                partial_interval_ms=700, partial_tail_seconds=12.0,
+                                max_utterance_seconds=25.0,
+                                mic_warmup_seconds=2.5, mic_gap_seconds=0.8),
+                        **(asr_over or {})}),
+        agent=agent or AgentConfig(provider="openclaw", url="ws://127.0.0.1:1/none",
+                                   connect_timeout=1.0, budget_ms=8000,
+                                   agent_label="答", agent_name="小龙虾"),
         composer=ComposerConfig(**composer),
     )
 

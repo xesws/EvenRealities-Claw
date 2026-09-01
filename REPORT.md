@@ -1,6 +1,6 @@
-# 交付报告：阶段一（模拟器闭环）+ 阶段二（真机 MVP）+ 模拟阶段全量开发（M0–M5）
+# 交付报告：阶段一（模拟器闭环）+ 阶段二（真机 MVP）+ 模拟阶段全量开发（M0–M7）
 
-> 2026-08-31 · v0.6.0
+> 2026-08-31 · v0.7.0
 > 仓库：https://github.com/xesws/EvenRealities-Claw （本文件 = 仓库根目录 `REPORT.md`）
 > 服务器：EC2 `i-0774fa15e542c6f1d`，公网 IP `35.169.46.183`，服务端口 `8443`
 
@@ -12,6 +12,21 @@
 之后，任意厂商的模型都能用 8 个标准 MCP 工具驱动它——按 G2 真实像素版式分页、写屏、翻页、读遥测。
 屏幕只有一块，写屏要过**帧租约**，用户开口说话无条件抢占。四进程真链路端到端 **27/27**
 （帧真的从设备 WebSocket 出来，不是只改了服务器状态）——详见 [docs/MCP-SURFACE.md](docs/MCP-SURFACE.md)。
+
+**回答你的那个 agent 现在是我们自己的**（M6）。`gateway/lens_agent/` 是一个约 900 行、
+能一次读完的 agent：直连 DeepSeek 的 OpenAI 兼容端点，**技能路由由确定性代码决定、
+不让模型选技能**，能力枚举只有读/写两档、**没有 exec**，每次工具调用都进审计日志。
+设计阶段留的四个问号全部实测打靶（`stream` 与 `tool_calls` 能并存、关掉 thinking 省 2.8s
+且少付 79 个 token、`reasoning_content` 确实出现在流式 delta 里所以必须显式拦），
+结论回填在 [docs/AGENT-LAYER.md](docs/AGENT-LAYER.md) §13.1。
+
+**而且屏幕会自己告状**（W6 agent 溯源）。握手时记下对端身份，`/healthz` 与控制面
+`state` 原样暴露；**对端不是生产 agent 时，眼镜状态条的徽记会带一个「?」**。
+演示时可以当场 `curl /healthz` 自证「没有替身」—— 这条约束是被测试守住的，
+不是靠自觉：`e2e_sim.py` 用夹具跑时会断言每一条状态条都带「?」，
+`e2e_agent.py` 用真 DeepSeek 跑时断言一条都不带。
+徽记是**每帧现算**而不是一轮取样一次——取样式写法会在冷启动和断线重连时留下一个窗口，
+而窗口里的那几帧恰恰是替身在答话却不打标（这条是提交前的对抗式评审找出来的，见 §13.6）。
 
 **你拿到眼镜后要做的全部事情（共 ~10 分钟）：**
 1. AWS 控制台放行 8443 端口（→ 第 5.1 节）
@@ -27,7 +42,7 @@
 1. [系统形态与仓库地图](#1-系统形态与仓库地图)
 2. [各组件详细说明](#2-各组件详细说明)
 3. [一次问答的完整数据流（含实测耗时）](#3-一次问答的完整数据流)
-4. [验证结果汇总（pytest 298 + 语音 e2e 28 + MCP e2e 27）](#4-验证结果汇总)
+4. [验证结果汇总（pytest 437 + vitest 82 + 语音 e2e 31 + MCP e2e 27 + 真 agent e2e 21）](#4-验证结果汇总)
 5. [【最重要】拿到眼镜后的完整上手流程](#5-拿到眼镜后的完整上手流程)
 6. [运维手册：服务、配置、日志、更新、**MCP 接入**](#6-运维手册)
 7. [排障速查表](#7-排障速查表)
@@ -36,6 +51,7 @@
 10. [眼镜到手后的五项实测清单（附操作方法）](#10-五项真机实测清单)
 11. [开发过程中发现并修复的工程问题](#11-工程问题记录)
 12. [阶段三预告](#12-阶段三预告)
+13. [未验证项清单 · 含**提交前的对抗式评审记录**](#13-未验证项清单)
 
 ---
 
@@ -73,8 +89,11 @@ EvenRealities-Claw/
 │   │   ├── session.py         ← 装配层：一块屏 + 一条语音链路（只做路由，无业务逻辑）
 │   │   ├── device/hud.py      ← 设备抽象：帧构造/节流/状态条/分页/计时器/**帧租约**
 │   │   ├── voice/pipeline.py  ← 语音链路：PTT → PCM → ASR → 确认窗口 → agent → 流式上屏
-│   │   ├── asr.py             ← faster-whisper 双模型管线
-│   │   ├── openclaw.py        ← 工部网关适配器
+│   │   ├── asr.py             ← faster-whisper 双模型管线 + 热词回声守卫
+│   │   ├── providers/         ← agent 抽象：网关对"对面是谁"只认这 6 个方法
+│   │   │   ├── base.py        ←   AgentProvider 协议 + AgentInfo（W6 溯源）
+│   │   │   ├── openclaw.py    ←   OpenClaw 适配器
+│   │   │   └── lens.py        ←   自研 agent 适配器
 │   │   ├── formatting/        ← 排版引擎（像素盒分页，与官方 pretext 度量逐条对齐）
 │   │   │   ├── metrics.py     ←   G2 字形度量的 Python 复刻（advance+kerning+逐字取整）
 │   │   │   ├── wrap.py        ←   折行 + 中文禁则（行首/行尾禁排，追出与悬挂）
@@ -90,7 +109,16 @@ EvenRealities-Claw/
 │   ├── lens_mcp/              ← **MCP 表面（独立进程）**：8 tools / 3 resources / 1 prompt
 │   │   ├── server.py          ←   工具定义与描述（三条事实逐字写进 description）
 │   │   └── client.py          ←   控制面 HTTP 客户端（Bearer 共享密钥）
-│   ├── tests/                 ← 298 单测 + e2e_sim.py（语音 28 项）+ e2e_mcp.py（MCP 27 项）+ fixtures 语音
+│   ├── lens_agent/            ← **自研 agent（独立进程）**：~900 行，可整体搬走
+│   │   ├── server.py          ←   Lens Agent Protocol v1（WS，只监听回环）
+│   │   ├── loop.py            ←   手写 agent loop（轮次上限 + 预算 + 降级收尾）
+│   │   ├── policy.py          ←   **全系统唯一的授权点**（白名单，不是黑名单）
+│   │   ├── skills.py          ←   skill = 系统提示 + 工具子集 + 预算；**路由由代码决定**
+│   │   ├── tools.py           ←   能力枚举只有 READ/WRITE，**没有 exec 档**
+│   │   ├── audit.py           ←   每次工具调用一行 JSON
+│   │   └── llm/deepseek.py    ←   DeepSeek OpenAI 兼容端点（aiohttp 直发，理由见 AGENT-LAYER §6.2）
+│   ├── tests/                 ← 437 单测 + e2e_sim.py（语音 31 项）+ e2e_mcp.py（MCP 27 项）
+│   │                            + e2e_agent.py（真 agent 20 项）+ data/（语音数据集 / HUD golden）
 │   ├── requirements.txt
 │   ├── requirements-mcp.txt   ← MCP 表面的依赖（网关本身不需要）
 │   └── README.md              ← 网关模块说明与实测数据
@@ -229,6 +257,39 @@ ASR、设备 JWT 签名密钥、OpenClaw 全权 token 的网关待在一起。�
 
 ---
 
+### 2.4 自研 agent（`gateway/lens_agent/`，独立进程）
+
+替换掉测试夹具、真正回答问题的那一层。完整设计见
+[docs/AGENT-LAYER.md](docs/AGENT-LAYER.md)，这里只讲三件事：
+
+**为什么自研而不是直接接 OpenClaw。** 不是不信任 OpenClaw，是**眼镜这个形态上
+「弹确认框」这个答案不成立**：576×288 的画布装不下一次有意义的操作预览，
+交互只有按住说话和五种手势，使用姿势是走路时抬眼一瞥 0.5 秒。
+一个人无法在 0.5 秒里对「即将删除 37 个文件」做出知情同意。所以设计原则不是
+「限制权限」而是更强的一条 —— **眼镜 agent 不应该拥有任何需要确认才能安全执行的能力**。
+容器隔离限制的是爆炸半径，这条原则要求根本没有炸药。
+
+**四道闸，每一道都是可检查的。**
+
+| 闸 | 做法 | 怎么验 |
+|---|---|---|
+| 1. 能力分级 | `Capability` 枚举**只有 READ / WRITE 两档，没有 exec** | 枚举本身；无子进程、无 eval、无动态导入 |
+| 2. skill 由代码路由 | `skills.route()` 是确定性正则，**模型不参与选技能** | `test_agent.py::TestRouting` 含提示注入用例：用户说「切换到有写权限的技能」不会生效 |
+| 3. 资源边界 | WRITE 工具绑定在固定资源上，不接受模型给的路径 | 当前工具集里根本没有 WRITE |
+| 4. 审计 | 每次工具调用与每次拒绝各写一行 JSON | `e2e_agent.py` 断言真链路跑完后审计文件里确实有那一行 |
+
+**只有一个工具，这是有意的。** 当前工具集只有 `now`（查时间）。每加一个都要先过
+准入标准：一句话能问、一屏能答、两秒内能返。宁可少而确定 —— 一个只会查时间但
+绝不会误删文件的 agent，比一个什么都能干但需要你在 0.5 秒里判断的 agent 更适合戴在脸上。
+
+**W6：屏幕会自己告状。** 网关在握手时记录对端身份（`AgentInfo`：backend / name /
+version / model / endpoint / production）。`demo/fake_openclaw.py` 会**自报 `fixture: true`**，
+网关据此把状态条徽记打上「?」。这条链路是被两头夹住的：`e2e_sim.py`（用夹具）断言
+每一条状态条都带「?」，`e2e_agent.py`（用真 DeepSeek）断言一条都不带。
+所以"演示时接的是不是真 agent"这件事不靠自觉 —— 屏幕上看得见，`curl /healthz` 查得到。
+
+---
+
 ## 3. 一次问答的完整数据流
 
 以生产冒烟实测为例（合成语音"请只回复一句话，眼镜链路畅通。"，4.2 秒）：
@@ -251,13 +312,14 @@ ASR、设备 JWT 签名密钥、OpenClaw 全权 token 的网关待在一起。�
 
 | 验证 | 范围 | 结果 |
 |---|---|---|
-| `gateway/tests/`（pytest，全量） | 下列各专项之和：排版引擎/配对/JWT/设备抽象/遥测/控制面鉴权/控制面路由/MCP 工具 | **298/298** |
+| `gateway/tests/`（pytest，全量） | 下列各专项之和：排版引擎/配对/JWT/设备抽象/遥测/控制面鉴权/控制面路由/MCP 工具/agent 层/ASR 质量/mic 看门狗/HUD golden/provider 连接生命周期 | **437/437** |
 | 排版与认证 | 字形度量/折行禁则/像素盒分页/净化/markdown 降级/版式契约/配对/JWT/吊销/过期/持久化，含 3 宽度 × 31 语料的参数化不变量与 600 例随机模糊 | **168/168** |
 | **设备抽象层**（`tests/test_device.py`） | 帧节流与 coalescing、seq 单调、状态迁移、翻页四触发源等价与边界、租约冲突/续租/过期/抢占、外部渲染走同一排版引擎、事件缓冲增量拉取、快照结构 | **24/24** |
 | **会话装配与回收**（`tests/test_session.py`） | S5 工具态接活、错误分支、`reset` 重新注入小屏风格、消息路由、会话 TTL 只回收「离线且静默」、启动钩子只注册一次、ASR warmup 幂等 | **16/16** |
 | **排版引擎 vs 官方 pretext** | 17 075 码点的 advance + 1 376 个折行用例逐条比对（外部 oracle） | **零分歧** |
 | 插件构建链 | `npm install && tsc --noEmit && vite build`（strict 模式） | 全绿 |
 | 插件桥接冒烟（vitest + jsdom） | 真 SDK + 真 `GlassesController` + 保真夹具：建页只能一次/rebuild 接力、写失败不毒化去重缓存、BLE 卡死 5s 超时、缺字静默丢弃、折行与 pretext 一致、溢出裁行、前台进出 vs 真退出、5 手势 × 4 来源、未知 eventType 不变幽灵翻页、**遥测组装与 R1 戒指过滤**、麦被抢 | **30/30** |
+| **★ 真 agent 端到端** `tests/e2e_agent.py` | 三进程：真 `lens_agent` → 真 DeepSeek → 真网关 → 真设备 WS。灌真实语音走完 ASR，断言答案里有真的当前时间（工具真的被调用了）、审计日志真的落了、状态条徽记**没有**「?」、全程没收到 `reasoning_content`、帧满足全部约束 | **21/21** |
 | **遥测上行通路**（`tests/test_telemetry.py`） | 无数据返回 None 而非零值、SN 出网关只留后 4 位、戒指整条拒收并计数、未确认型号同样拒收、字段白名单、poll 标注"可能是缓存"、过期仍返回最后已知值、cmd/cmd_result 一次性与重连作废、失败回执不覆盖已知值、低电量页脚只出现一次 | **28/28** |
 | **控制面鉴权**（`tests/test_control_auth.py`） | Bearer 共享密钥（多空格/大小写/非 ASCII token 不再 500）、反代后 loopback 判据失效的回归、配对码失败节流（按来源锁定 + 全局上限）、`trust_forwarded_for` 关闭时不认 XFF | **22/22** |
 | **控制面路由**（`tests/test_control_plane.py`） | 九个路由的正常与错误分支：未知设备 vs 从未连过、租约冲突 409 结构化体、正文超限 413、所有读接口带 `as_of`、事件游标增量 | **22/22** |
@@ -265,9 +327,22 @@ ASR、设备 JWT 签名密钥、OpenClaw 全权 token 的网关待在一起。�
 | **★ MCP 四进程真链路** `tests/e2e_mcp.py` | 真 MCP 客户端 → 真 `lens_mcp` 进程 → 真网关进程 → 真设备 WebSocket。断言落在最远端：调完工具后**帧必须真的从设备 WS 出来**；并发写屏返回 `LEASE_HELD` 而非最后写入者赢；`ptt start` 抢占后原租约 `LEASE_INVALID` 且事件可轮询到 | **27/27** |
 | 插件字形与契约 | 用官方 pretext 逐字校验所有会上屏的字符；反向断言被替换的 10 个旧字形确实缺失；版式自洽 | **10/10** |
 | **官方模拟器实测** `tools/g2probe.mjs` | 8 屏自动化：满画布建页返回码、缺字渲染、26 个字形逐格墨迹判定、内容上限字节/字符口径 | 见 [docs/GLYPH-TABLE.md](docs/GLYPH-TABLE.md)、[docs/HARDWARE-SPEC.md](docs/HARDWARE-SPEC.md) |
-| 插件 WS 协议冒烟（存根网关） | 配对→resume→翻页→PTT 上行→看门狗→退避重连→自动 refresh→旧 seq 丢弃 | ⚠️ **仍未实现**（桥接层已覆盖，WS 层尚未，见 §13） |
+| **自研 agent 层**（`tests/test_agent.py`） | 思维链不上屏（3 条路径）、`tool_calls` 分片装配、模型 id 与 key 读取、技能路由的提示注入抗性、policy 白名单、工具能力档、loop 的降级与轮次上限、系统提示前缀字节稳定 | **51/51** |
+| **ASR 质量**（`tests/test_asr_quality.py`） | 自建 10 条语音数据集（edge-tts，3 个音色，带 ground truth）跑**生产** `AsrEngine.final()`：CER 均值 0.0085（阈值 0.05）、最差 0.50 上限、弃转不计入错误但有上限、**热词回声零容忍** | **15/15** |
+| **mic 看门狗**（`tests/test_voice.py`） | 启麦慢与链路断用两个判据（此前混用一个硬编码 1.0s）；1.4s 处不误报的回归；预算非法值在加载期拒绝 | **11/11** |
+| **HUD 帧序列 golden**（`tests/test_hud_golden.py`） | 13 个场景 68 帧快照 + 每帧硬性不变量：**所有字形都在 G2 字库内**、行宽不超容器、行数不超 `floor(h/27)`、无裸 markdown、seq 单调、页脚与 `meta.page` 同源、W6 徽记全程一致 | **25/25** |
+| **插件 WS 协议冒烟（存根网关）** | 配对→resume→翻页→PTT 上行→PCM 合并→心跳看门狗→退避重连→自动 refresh→旧 seq 丢弃→未知消息容忍。打桩只到传输层，被测的是真的 `LensClient`；**5 个变异测试确认这套断言会咬** | **28/28** |
+| **插件 PCM 载荷契约** | 实测钉住 SDK 对 `number[]` / base64 / `Uint8Array` 三种载荷 × 三种信封的归一行为；解不出来的形状不崩、不把坏数据交给上行、并留下可排障的日志 | **10/10** |
 | **端到端闭环** `tests/e2e_sim.py` | 真服务进程 + 真 ASR + agent 测试夹具（`demo/fake_openclaw.py`，protocol v3 同一套，仅回复内容来自剧本）：配对→PTT→灌真实语音→转写→回复→帧约束（seq 单调/行宽/容器结构）→翻页→重连恢复→reset。**自足运行，不依赖任何仓库外服务**；打真 agent 见 §6.6 | 见下方运行输出 |
 | **生产部署冒烟** | systemd 正式实例（非测试实例）整轮问答 | S2→S3→S4→S6→S7，11.0s |
+
+**CI 已建**（`.github/workflows/ci.yml`，M7）：插件 typecheck + vitest + build、
+网关 pytest、端到端（模拟链路 + MCP 四进程）三个 job。其中有一道刻意加的闸门 ——
+排版引擎的外部 oracle 需要 node 与 `@evenrealities/pretext`，缺了会整模块 skip，
+那样 CI 会绿而「我们的折行与官方一致」这个最关键的结论根本没被验证过；
+所以 CI 跑完会解析 junit xml，**oracle 只要有一条 skip 就判失败**。
+真 agent 端到端（`e2e_agent.py`）**故意不进 CI**：它会产生真实付费调用，
+放进去等于每个 PR 都花钱，且外部服务抖动会把构建结果变成噪音 —— 它是发版前手动跑的验收项。
 
 当前服务状态（交付时刻）：`{"ok": true, "asr_ready": true, "openclaw": true}`，服务 enabled（开机自启）+ active。
 
@@ -345,7 +420,22 @@ ASR、设备 JWT 签名密钥、OpenClaw 全权 token 的网关待在一起。�
 ```
 http://35.169.46.183:8443/plugin/harness/harness.html
 ```
-允许麦克风 → 页面里有块"假眼镜屏" → 走 5.3 配对 → 按住说话问真工部。与真机代码路径完全一致，还能模拟镜腿点击和断网。
+允许麦克风 → 页面里有块"假眼镜屏" → 走 5.3 配对 → 按住说话。与真机代码路径完全一致，
+还能模拟镜腿点击和断网。
+
+本机一条命令拉起完整链路（三种模式，差别只在 `chat.send` 的对端是谁）：
+
+```bash
+export LENS_LLM_API_KEY=sk-...
+./demo/start.sh --lens     # 推荐：拉起自研 agent，直连 DeepSeek
+./demo/start.sh --real     # 连本机真的 OpenClaw 网关
+./demo/start.sh            # 替身模式，离线调链路用
+```
+
+⚠️ **替身模式不是可以拿去演示的东西**：`demo/fake_openclaw.py` 在握手里自报
+`fixture: true`，网关会据此在状态条徽记上打「?」（W6）。**屏幕自己会告状，这是有意的。**
+演示请用 `--lens`，并当场 `curl /healthz` 看 `agent.backend` / `agent.model` /
+`agent.production` 自证对端是谁。
 
 ---
 
@@ -429,9 +519,22 @@ systemctl --user restart lens-gateway
 ```bash
 cd ~/EvenRealities-Claw/gateway
 .venv/bin/pip install -r requirements-dev.txt      # 测试依赖（pytest / pytest-asyncio / mcp）
-PYTHONPATH=. .venv/bin/pytest tests/ -q            # 298 单测，秒级
+PYTHONPATH=. .venv/bin/pytest tests/ -q            # 437 单测，秒级
 PYTHONPATH=. .venv/bin/python tests/e2e_sim.py     # 语音端到端，自足运行（~2 分钟）
 PYTHONPATH=. .venv/bin/python tests/e2e_mcp.py     # MCP 四进程真链路（~30 秒）
+
+# 真 agent 端到端：三进程 + 真 DeepSeek。会产生真实付费调用，故不在 CI 里。
+LENS_LLM_API_KEY=sk-... PYTHONPATH=. .venv/bin/python tests/e2e_agent.py
+
+# 插件侧
+cd ../plugin && npm ci && npm run typecheck && npm test    # 82 个 vitest 用例
+```
+
+再生成两套 golden（**只有确认排版/画面改动是预期的**才做，diff 要有人看）：
+
+```bash
+PYTHONPATH=. .venv/bin/python -m tests.data.formatting.corpus --regen   # 排版
+PYTHONPATH=. .venv/bin/python -m tests.data.hud.scenes --regen          # HUD 帧序列
 ```
 
 `e2e_sim.py` 默认自己拉起 `demo/fake_openclaw.py` 作为 **agent 测试夹具**——它跑的是与真
@@ -520,7 +623,10 @@ claude mcp add --transport http even-glasses http://127.0.0.1:8765/mcp
 | 控制面限流 | ⚠️ 仅正文上限 | `MAX_RENDER_CHARS=20000`（超出 413），无 QPS 限流 |
 | TLS | ⚠️ | 当前 http/ws；差一个域名（6.4） |
 | 锁屏可用 | ❌ 设计内放弃 | 产品定位"亮屏按住说话"；锁屏存活时长属于真机实测项 |
-| 多 agent 路由 | ❌ 阶段三 | 当前固定工部；"问格物…"/"切到…"文法在设计文档已定稿 |
+| 多 agent 路由 | ❌ 阶段三 | 当前固定单 agent；"问格物…"/"切到…"文法在设计文档已定稿 |
+| 自研 agent 的容器隔离 | ❌ AGENT-LAYER P3 | 进程边界已经有了（agent 单独进程、只监听回环、LLM key 只存在于 agent 进程），容器化演练未做 |
+| 自研 agent 的工具集 | ⚠️ 只有 1 个 | 当前只有 `now`（查时间）。这是**有意的起点**而不是遗漏：每加一个工具都要先过 §9.1 的准入标准（一句话能问、一屏能答、两秒内能返），宁可少而确定 |
+| lens agent 协议层鉴权 | ⚠️ 无 | 与 MCP 同理：只绑 `127.0.0.1`，`server.py` 会拒绝绑到非回环地址。同机进程仍可调用 |
 | TTS 语音回放 | ❌ 阶段三 | 你已确认 MVP 纯 HUD 文本 |
 | 都察告警上屏 | ❌ 阶段三 | 告警管道（去重/限流/熔断）设计已定稿 |
 | R1 戒指支持 | ⚠️ 部分 | SDK 事件已监听（EventSourceType.RING 与镜腿同路），未单独测试 |
@@ -585,8 +691,13 @@ claude mcp add --transport http even-glasses http://127.0.0.1:8765/mcp
 
 | 声称位置 | 当时状态 | 现在 |
 |---|---|---|
-| §4「插件协议冒烟（jsdom + 存根网关）25/25」 | **不存在** | **部分补上**：`plugin/tests/` 已有 44 个 vitest 用例（桥接层 30 + 字形契约 10 + 夹具接线 4），但覆盖的是 **bridge 层**；WS 协议层（配对/resume/退避重连/refresh）的冒烟**仍未实现** |
-| §4「心跳看门狗专项 通过」 | **不存在** | **仍未实现** |
+| §4「插件协议冒烟（jsdom + 存根网关）25/25」 | **不存在** | ✅ **已补齐**（M7）：`plugin/tests/` 现有 **82** 个 vitest 用例。WS 协议层由 `ws-protocol.test.ts` 覆盖 **28** 条 —— 配对/resume/seq 过滤/PTT 与 PCM 合并/心跳/退避重连/自动 refresh/命令回执/未知消息容忍。打桩只到传输层（`tests/stub-gateway.ts`），被测的是真的 `LensClient` |
+| §4「心跳看门狗专项 通过」 | **不存在** | ✅ **已补齐**（M7）：4 条专项 —— 20s 一次 ping、两次无 pong 判定断线且**先通知看门狗再撕 socket**（顺序是关键：眼镜上必须先盖掉旧帧）、pong 按时不误判、断线只通知一次且重连后重新武装 |
+
+这两条当初是**被声称但不存在**的，所以补齐之后必须给出可复核的证据，而不是再声称一次。
+证据是：把 `src/ws.ts` 做 5 处变异（seq 过滤改成严格小于 / 新连接不重置 seq 基线 /
+看门狗阈值调到永不触发 / stop 前不 flush 尾块 / refresh 不设已重试标志），
+**每一处都恰好打红一条用例**。一套全绿但杀不死任何变异的测试等于没有测试。
 
 ### 13.2 从未在物理 G2 上执行过的代码路径
 
@@ -613,8 +724,8 @@ claude mcp add --transport http even-glasses http://127.0.0.1:8765/mcp
 | 假屏字号是启发式猜测（`h<=48?24px:32px`） | ✅ 已修：G2 **没有字号控制**，两档字号是虚构的；夹具改为单一字号 + 27px 固定行高，横向位置由 pretext 的累计 advance 定位 |
 | 用桌面字体渲染，12 个特殊字形是否存在「完全未知」 | ✅ 已判定：见 §13.4 与 [docs/GLYPH-TABLE.md](docs/GLYPH-TABLE.md) |
 | 无 mic 被抢 | ✅ 已修：`micDenied` 可注入 |
-| **PCM 载荷推 `number[]`** | ❌ **仍未覆盖**：真机若为 base64 字符串或 `Uint8Array`，归一路径未测（列入 M7） |
-| **麦克风是本地 getUserMedia（毫秒级）** | ❌ **仍未覆盖**：真机 BLE 启麦冷启动延迟无法模拟。已把插件改为「先开麦、确认成功、再发 ptt start」，但 `mic_warmup_seconds` 的真值待真机回填 |
+| **PCM 载荷推 `number[]`** | ✅ **已判定，而且结论和计划里写的不一样**：原计划是在插件里写一个「兼容三种载荷」的归一函数。实测发现**SDK 自己已经归一了** —— `number[]`、base64 字符串、`Uint8Array` 三种载荷 × `{type,jsonData}` / `{type,data}` / 数组三种信封，九种组合全部出来的是 `Uint8Array`（`plugin/tests/audio-pcm.test.ts` 把这个契约钉住了）。所以那段归一函数没有写：它会是重复实现，而且会掩盖真正的失败模式 —— SDK **认不出**的形状（如 Node 的 `{type:'Buffer',data:[…]}`）会让 `audioEvent` 整个消失，音频被**静默丢弃**，用户说了一整句话一个字节没上行，而网关那头只报「麦克风没有声音」。改动是给这条路径加了可排障的日志（带载荷形状、且有刷屏防护），不是加一层归一 |
+| **麦克风是本地 getUserMedia（毫秒级）** | ⚠️ **真值仍待真机，但误报的成因已经修掉**：旧看门狗把两件事混成一个硬编码 1.0s 判据 —— 而 partial 循环 700ms 才检查一次，真实宽限只有 1.4s。现在拆成两个：`mic_warmup_seconds`（默认 **2.5**，等第一块 PCM，要塞下 WS RTT + BLE 下发 + 固件启麦 + 首帧回传 + 插件攒 200ms + 上行）与 `mic_gap_seconds`（默认 0.8，音频已在流又断了）。两者的合理等待时间差好几倍，混在一起必然错判一边。`tests/test_voice.py` 里有一条专门守着「1.4s 处不报警」的回归 |
 
 ### 13.4 上一版第 6、7 项：**已判定，从真机清单里移除**
 
@@ -640,13 +751,78 @@ claude mcp add --transport http even-glasses http://127.0.0.1:8765/mcp
 | `session.py`（装配 + 遥测路由）+ `voice/pipeline.py` + `server.py` 会话回收 | 620 | **16** |
 | `control.py`（控制面九路由）+ `server.py` 鉴权与节流 | 200 + | **44**（路由 22 + 鉴权 22） |
 | `lens_mcp/`（MCP 表面：server + client） | 400 | **18**（走真实链路到帧，无打桩） |
-| `asr.py` + `openclaw.py` + `server.py` 其余部分 | ~640 | 端到端覆盖，无独立单测（排在 M7） |
-| `plugin/src`（TypeScript） | ~1500 | **44**（桥接层 30 + 字形契约 10 + 夹具接线 4；WS 层仍为 0） |
+| `lens_agent/`（自研 agent：loop/policy/tools/skills/audit/llm） | ~900 | **51** |
+| `asr.py`（含热词回声守卫） | 183 | **15**（自建语音数据集 + CER 阈值，走生产解码路径） |
+| `voice/pipeline.py`（mic 看门狗） | ~230 | **11** + 端到端 |
+| HUD 帧序列（跨 `device/` + `voice/` + `formatting/` 的集成快照） | — | **25**（13 场景 68 帧 + 每帧不变量） |
+| `providers/`（AgentProvider 抽象 + 两个实现 + W6 溯源 + 连接生命周期） | ~450 | **34** |
+| `plugin/src`（TypeScript） | ~1500 | **82**（桥接层 30 + 字形契约 10 + 夹具接线 4 + **WS 协议层 28** + **PCM 载荷契约 10**） |
 
-端到端：语音链路 `tests/e2e_sim.py` **28/28**、MCP 链路 `tests/e2e_mcp.py` **27/27**，
-两者都自足运行、不依赖任何仓库外服务。仓库**仍无 CI**（无 `.github/`），排在 M7。
+端到端：语音链路 `tests/e2e_sim.py` **31/31**、MCP 链路 `tests/e2e_mcp.py` **27/27**
+（两者自足运行、不依赖任何仓库外服务），真 agent 链路 `tests/e2e_agent.py` **21/21**
+（需 `LENS_LLM_API_KEY`，会产生真实付费调用，故不进 CI）。
+**CI 已建**：`.github/workflows/ci.yml`，三个 job + 一道「外部 oracle 不许静默 skip」的闸门。
 
-### 13.6 真正只能靠真机判定的（6 项）
+### 13.6 对抗式评审：M6 + M7 在提交前被 105 个 agent 找过一遍
+
+M6（自研 agent）与 M7（桥接硬化）写完之后没有直接提交，先过了一轮**对抗式评审**：
+6 个维度（流式契约 / 安全 / 协议 / 并发 / 测试质量 / 桥接）各自独立找问题，
+每一条发现再交给 **3 个互相看不见的视角去「把它驳倒」**——复核的任务不是确认"对不对"，
+而是"请证伪它"，默认立场是驳回。共 **105 个 agent**，提出 **33 条**，**存活 6 条**。
+
+被驳回的 27 条不是"看着不像问题"就放过的。驳回方给的是复现脚本或反证，例如：
+有一条说 golden 里的「无裸 markdown」是恒真断言，驳回方直接按它描述的变异改了
+`strip_markdown` 去跑，结果是 8 条用例打红而不是它声称的"全绿"；另一条说
+`abort_midway` 场景其实是在 final 之后才打断（等于没测僵尸 run），驳回方数了
+golden 里那个场景的 7 帧、指出最后一帧正文停在「没有字号控」这个词中间，
+证明屏幕确实冻在半截流式文本上。**驳回的质量本身就是这轮评审的产出之一。**
+
+#### 一个必须讲清楚的时序问题
+
+这轮评审跑在一个**仍在演进的工作区**上。6 条"确认"里有 5 条，在评审还在运行期间
+就已经被独立发现并修掉了——所以同一个问题的另一份提交，在复核阶段读到的是修好后的代码，
+于是进了"驳回"列。两个列表因此互相矛盾（比如 `_read_hello` 那条同时出现在确认与驳回里）。
+
+这不是评审出错，是**对着移动靶做评审的固有局限**。处理办法只有一个：把 6 条确认逐条
+拿回代码里对，而不是照单全收。对完的结果是——真正需要新动手的只有第 3 条（W6 徽记时序）。
+
+#### 6 条确认 + 3 条顺藤摸出来的
+
+| 位置 | 缺陷 | 演示时会怎样 |
+|---|---|---|
+| `providers/lens.py` delta 归并 | 照抄 openclaw 的「增量 / 全文」启发式，而 agent 在工具跑完后会把正文清零重写 | 「现在几点」这种最普通的问题，屏幕上拼出二次方级重复的乱码 |
+| `providers/openclaw.py` `_read_hello` | 对端把 `server` 报成字符串就抛 `AttributeError` | 连锁触发下一条 |
+| `providers/lens.py` `_connect` | 握手失败不收 socket，`ensure_connected` 此后永远短路 | agent 起来了也再连不上，且 W6 溯源永久停在 unknown ⇒ **替身不再告状** |
+| `providers/lens.py` `_reader` | 断线不清 run 表 | `session_busy` 永久为 True，眼镜锁死在「上一条还在跑」 |
+| `voice/pipeline.py` W6 徽记 | 一轮取样一次，而"没连上"时按可信处理 | **冷启动第一句**：替身在答，屏幕上却一个「?」都没有 |
+
+修 W6 那条时没有按建议"挪个位置再取样一次"，而是把徽记改成**每帧现算**
+（`HudDevice.agent_production` 绑一个溯源探针）。理由是取样式写法必然留下时序窗口，
+挪位置只是把窗口移小；现算把窗口整个消掉——握手什么时候完成，下一帧的徽记就什么时候变。
+
+顺着补回归测试，又摸出 **3 条评审没提的同类缺陷**：
+
+1. **openclaw 三处没跟 lens 同步**：握手失败不 teardown、断线不清 run 表、`_request`
+   超时泄漏 future。`--fake` 演示模式走的正是这条 provider。
+2. **两个 provider 的 `chat_send` 都可能把 run 登记到一条已经死掉的连接上**：
+   `_reader` resolve 掉 res 之后不会停下来等 `chat_send` 恢复，它接着读下一帧——
+   那一帧可能就是 close。于是 finally 先跑完（那时 run 还没进表，清了个空），
+   `chat_send` 才恢复并登记。症状与上表第 4 条一样（会话永久占用）但成因完全不同，
+   评审的 6 条里没有覆盖。
+3. **`except Exception` 抓不到 `CancelledError`**：握手被外部取消（`asyncio.wait_for`、
+   用户按打断）时 socket 同样不回收——正是上表第 3 条的另一半，而且是更常见的那一半。
+
+这 3 条现在都由 `TestConnectionLifecycle` 守着，用的是**真的 aiohttp WebSocket 服务器**
+（这些缺陷全都发生在 `_reader` 的 finally 与 `_connect` 的异常路径上，打桩就把要测的东西打没了）。
+
+#### 这一节想说明的
+
+评审的产出不是"33 条里存活 6 条"这个数字，而是**每一条存活的都留下了一个会咬的回归测试**。
+逐条做过变异验证：把修复挨个改回去（现算退回取样、`BaseException` 退回 `Exception`、
+去掉连接存活检查、去掉 `isinstance` 守卫），每一处都恰好打红对应的用例。
+`providers/` 的用例数因此从 21 涨到 **34**。
+
+### 13.7 真正只能靠真机判定的（6 项）
 
 上一版列了 8 条，其中「真实字宽」「特殊字形可用性」「`\n` 换行语义」三条已在 §13.4 判定并移除。
 剩下的是：

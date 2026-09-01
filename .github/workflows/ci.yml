@@ -1,0 +1,107 @@
+# CI（M7）。四个 job 按"越贵越靠后"排，前面的失败不必等后面跑完。
+#
+# 一条原则：**不让测试悄悄跳过就算通过**。排版引擎的外部 oracle 需要 node 与
+# plugin/node_modules/@evenrealities/pretext，缺了会整模块 skip —— 那样 CI 会绿，
+# 而"我们的折行和官方一致"这个最关键的结论根本没被验证过。所以 gateway job
+# 先装插件依赖，跑完再显式断言 oracle 没有 skip。
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  PYTHON_VERSION: '3.13'
+  NODE_VERSION: '22'
+
+jobs:
+  plugin:
+    name: 插件（typecheck + vitest + build）
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: plugin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: plugin/package-lock.json
+      - run: npm ci
+      - name: 类型检查
+        run: npm run typecheck
+      - name: 单元测试（jsdom + 真 SDK + 存根传输层）
+        run: npm test
+      - name: 构建
+        run: npm run build
+
+  gateway:
+    name: 网关（pytest + 排版外部 oracle）
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: gateway/requirements-dev.txt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: plugin/package-lock.json
+      - name: 装插件依赖（排版 oracle 要用 @evenrealities/pretext）
+        run: npm ci
+        working-directory: plugin
+      - name: 装网关依赖
+        run: pip install -r requirements-dev.txt
+        working-directory: gateway
+      - name: 单元测试
+        run: PYTHONPATH=. pytest tests/ -q --junitxml=/tmp/pytest.xml
+        working-directory: gateway
+      - name: 断言外部 oracle 真的跑了（没有静默 skip）
+        run: |
+          python - <<'PY'
+          import sys, xml.etree.ElementTree as ET
+          root = ET.parse('/tmp/pytest.xml').getroot()
+          oracle = [tc for tc in root.iter('testcase')
+                    if 'test_metrics_oracle' in (tc.get('classname') or '')]
+          skipped = [tc for tc in oracle if tc.find('skipped') is not None]
+          print(f'oracle 用例 {len(oracle)} 个，跳过 {len(skipped)} 个')
+          if not oracle or skipped:
+              print('❌ 排版外部 oracle 没有真的执行 —— 折行与官方 pretext 是否一致未经验证')
+              sys.exit(1)
+          PY
+
+  e2e:
+    name: 端到端（模拟链路 + MCP 四进程）
+    runs-on: ubuntu-latest
+    # 要下 whisper 模型（tiny+base ≈ 200MB），比单测慢一个量级，所以单独成 job
+    needs: [gateway]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+          cache-dependency-path: gateway/requirements-dev.txt
+      - name: 缓存 whisper 模型
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: whisper-${{ runner.os }}-tiny-base-v1
+      - run: pip install -r requirements-dev.txt
+        working-directory: gateway
+      - name: 语音链路端到端（自带 agent 夹具，无外部依赖）
+        run: PYTHONPATH=. python tests/e2e_sim.py
+        working-directory: gateway
+      - name: MCP 四进程真链路
+        run: PYTHONPATH=. python tests/e2e_mcp.py
+        working-directory: gateway
+
+  # 真 agent 端到端（tests/e2e_agent.py）**故意不进 CI**：它会对 DeepSeek 发起真实
+  # 付费调用，需要 LENS_LLM_API_KEY。放进 CI 等于让每个 PR 都花钱，且外部服务抖动
+  # 会把构建结果变成噪音。它是发版前手动跑的验收项，证据记在 REPORT.md。

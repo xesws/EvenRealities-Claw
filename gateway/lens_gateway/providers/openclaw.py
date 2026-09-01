@@ -1,5 +1,8 @@
 """OpenClaw 网关适配器：loopback WS，token 只在服务器内部使用。
 
+**这是不受控的第三方 agent**：网关必须替它注入小屏风格指令（`injects_style=True`），
+并在排版层强制剥 markdown 兜底。自研的 `providers/lens.py` 则自己承担这个契约。
+
 协议（OpenClaw gateway protocol v3）：
 - 连接后发 {type:"req", method:"connect", params:{auth:{token}, ...}}，收 hello-ok；
 - chat.send → 立即 res {runId}，随后 event:"chat" 流（state: delta/final/error）；
@@ -14,16 +17,13 @@ import json
 import logging
 import uuid
 from dataclasses import dataclass, field
-from typing import Awaitable, Callable
 
 import aiohttp
 
-from .config import OpenClawConfig
+from ..config import OpenClawConfig
+from .base import UNKNOWN_AGENT, AgentInfo, ChatCallback
 
 log = logging.getLogger(__name__)
-
-ChatCallback = Callable[[str, str, str], Awaitable[None]]
-# 参数: (kind, text, extra)  kind ∈ partial|final|error|tool
 
 
 @dataclass
@@ -47,6 +47,13 @@ class OpenClawClient:
         self._connect_lock = asyncio.Lock()
         self._reader_task: asyncio.Task | None = None
         self.connected = asyncio.Event()
+        self._info: AgentInfo = UNKNOWN_AGENT
+
+    #: 对面是不受控的第三方，小屏风格得由网关注入
+    injects_style = True
+
+    def info(self) -> AgentInfo:
+        return self._info
 
     # ---------- 连接管理 ----------
 
@@ -62,7 +69,37 @@ class OpenClawClient:
         token = self.cfg.read_token()
         self._ws = await self._http.ws_connect(self.cfg.url, heartbeat=20)
         self._reader_task = asyncio.create_task(self._reader())
-        hello = await self._request("connect", {
+        try:
+            hello = await self._handshake(token)
+        except BaseException:
+            # `BaseException` 而不是 `Exception`：外部取消走 `CancelledError`，
+            # 它不是 `Exception` 的子类，漏掉的正好是最常见的那种失败。
+            # 与 `lens.py` 同一处理：握手失败必须把 socket 收干净，否则 `_ws` 停在
+            # "未关闭"状态，`ensure_connected()` 的短路判据会认为已经连上了，
+            # 此后**再也不会重连** —— 网关会在一条没握过手的 socket 上一直发 chat.send。
+            await self._teardown()
+            raise
+        self._info = self._read_hello(hello)
+        log.info("openclaw connected: protocol=%s agent=%s production=%s",
+                 hello.get("protocol"), self._info.name, self._info.production)
+        self.connected.set()
+
+    async def _teardown(self) -> None:
+        """收掉当前连接的 socket 与 reader，让 ensure_connected 下次真的重连。"""
+        self.connected.clear()
+        self._info = UNKNOWN_AGENT
+        if self._reader_task is not None:
+            self._reader_task.cancel()
+            self._reader_task = None
+        if self._ws is not None:
+            try:
+                await self._ws.close()
+            except Exception:
+                pass
+            self._ws = None
+
+    async def _handshake(self, token: str) -> dict:
+        return await self._request("connect", {
             "minProtocol": 3,
             "maxProtocol": 3,
             "client": {
@@ -77,8 +114,30 @@ class OpenClawClient:
             "locale": "zh-CN",
             "userAgent": "lens-gateway/0.1.0",
         }, timeout=10)
-        log.info("openclaw connected: protocol=%s", hello.get("protocol"))
-        self.connected.set()
+
+    def _read_hello(self, hello: dict) -> AgentInfo:
+        """W6 · 从握手响应里认出对面是谁。
+
+        `fixture: true` 是测试替身（`demo/fake_openclaw.py`）**自报**的诚实标记 ——
+        真的 OpenClaw 网关不会发这个字段。这样 `/healthz` 就能当场自证
+        「后面挂的不是一个写死剧本的替身」，而不是靠嘴说。
+        """
+        # 对端不一定按我们想的形状回。`server` 见过是字符串的（"openclaw/1.0"），
+        # 那时 `.get` 会抛 AttributeError —— 而这个异常发生在 `_connect` 里，
+        # 会把连接留在半开态，此后**永远连不上**。握手解析必须对任何形状都不抛。
+        server = hello.get("server") or hello.get("serverInfo") or {}
+        if not isinstance(server, dict):
+            server = {}
+        fixture = bool(hello.get("fixture") or server.get("fixture"))
+        return AgentInfo(
+            backend="openclaw",
+            name=str(server.get("name") or hello.get("agent") or self.cfg.agent_name),
+            version=str(server.get("version") or hello.get("protocol") or ""),
+            endpoint=self.cfg.url,
+            production=not fixture,
+            note=("★ 测试替身：回复来自剧本而非模型（对端自报 fixture=true）"
+                  if fixture else "第三方 OpenClaw 网关，回复由其后端 agent 生成"),
+        )
 
     async def close(self) -> None:
         if self._reader_task:
@@ -115,6 +174,7 @@ class OpenClawClient:
             log.exception("openclaw reader died")
         finally:
             self.connected.clear()
+            self._info = UNKNOWN_AGENT
             for fut in self._pending.values():
                 if not fut.done():
                     fut.set_exception(ConnectionError("openclaw connection lost"))
@@ -123,15 +183,25 @@ class OpenClawClient:
                 if not run.done.is_set():
                     asyncio.ensure_future(run.callback("error", "与 agent 网关断开", ""))
                     run.done.set()
+            # 连接都断了，任何 run 都不可能再收到事件。不清空的话
+            # `session_busy()` 永久为 True —— 用户之后每次按 PTT 都被挡在
+            # 「上一条还在跑」那一帧，agent 早就重连好了眼镜却锁死。
+            self._runs.clear()
+            self._session_runs.clear()
 
     async def _request(self, method: str, params: dict, timeout: float = 30) -> dict:
         assert self._ws is not None
         req_id = uuid.uuid4().hex[:12]
         fut: asyncio.Future = asyncio.get_running_loop().create_future()
         self._pending[req_id] = fut
-        await self._ws.send_str(json.dumps(
-            {"type": "req", "id": req_id, "method": method, "params": params}, ensure_ascii=False))
-        return await asyncio.wait_for(fut, timeout)
+        try:
+            await self._ws.send_str(json.dumps(
+                {"type": "req", "id": req_id, "method": method, "params": params},
+                ensure_ascii=False))
+            return await asyncio.wait_for(fut, timeout)
+        finally:
+            # 超时/取消/发送失败都要把坑填上，否则 `_pending` 无界增长。
+            self._pending.pop(req_id, None)
 
     # ---------- 事件分发 ----------
 
@@ -193,6 +263,12 @@ class OpenClawClient:
             "timeoutMs": timeout_ms,
         })
         run_id = res.get("runId") or uuid.uuid4().hex
+        # ★ 与 `lens.py` 同一道检查：`_request` 成功返回**不等于**连接还活着。
+        # `_reader` resolve 掉 res 之后接着读下一帧，那一帧可能就是 close；
+        # finally 先跑完（那时 run 还没进表），本协程才恢复并把 run 登记到
+        # 一条已经死掉的连接上 —— 回调永远等不到事件，会话永久占用。
+        if not self.connected.is_set():
+            raise ConnectionError("与 agent 网关的连接在这一轮发送过程中断开")
         run = _Run(run_id=run_id, session_key=session_key, callback=callback)
         self._runs[run_id] = run
         self._session_runs[session_key] = run_id

@@ -106,7 +106,14 @@ class ControlPlane:
         return web.json_response({"devices": rows, **self._as_of()})
 
     async def state(self, req: web.Request) -> web.Response:
-        return web.json_response({**self._session(req).snapshot(), **self._as_of()})
+        # W6：屏幕上这段文字是谁生成的，跟着画面一起返回 —— MCP 客户端读画面时
+        # 就能知道后面挂的是真 agent 还是替身，不用再去问 /healthz。
+        return web.json_response({
+            **self._session(req).snapshot(),
+            "agent": {"connected": self.server.agent.connected.is_set(),
+                      **self.server.agent.info().as_dict()},
+            **self._as_of(),
+        })
 
     async def telemetry(self, req: web.Request) -> web.Response:
         session = self._session(req)

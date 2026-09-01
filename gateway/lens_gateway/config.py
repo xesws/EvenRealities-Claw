@@ -30,6 +30,27 @@ class OpenClawConfig:
 
 
 @dataclass
+class AgentConfig:
+    """选哪个 agent，以及自研 agent 的连接参数。
+
+    默认 `openclaw`：P0 的验收标准是**行为零变化**，所以默认值必须保持现状。
+    """
+
+    provider: str = "openclaw"                 # openclaw | lens
+    url: str = "ws://127.0.0.1:18790"          # provider=lens 时的 Lens Agent Protocol 端点
+    connect_timeout: float = 10.0
+    budget_ms: int = 8000                      # 单轮延迟预算，超时即降级收尾
+    agent_label: str = "答"                    # 状态条徽记（自研 agent）
+    agent_name: str = "小龙虾"
+
+    def __post_init__(self) -> None:
+        if self.provider not in ("openclaw", "lens"):
+            raise ValueError(f'agent.provider 只能是 "openclaw" 或 "lens"：{self.provider!r}')
+        if self.budget_ms <= 0:
+            raise ValueError(f"agent.budget_ms 必须为正：{self.budget_ms}")
+
+
+@dataclass
 class AsrConfig:
     # 本机（4×Neoverse-N1）实测：tiny partial≈670ms；base final RTF≈0.35；small RTF≈1.0 过慢
     partial_model: str = "tiny"    # 聆听态 partial（速度优先，仅供显示）
@@ -41,6 +62,34 @@ class AsrConfig:
     partial_interval_ms: int = 700
     partial_tail_seconds: float = 12.0  # partial 只解码最近 N 秒，控制 CPU
     max_utterance_seconds: float = 25.0
+
+    #: 按下 PTT 之后，等**第一块** PCM 的宽限期。
+    #:
+    #: 这段时间里要塞下：WS 下行 RTT + Flutter 下发 BLE 开麦命令 + 固件启麦 +
+    #: 首块 PCM 经 BLE 回传 + 插件攒够 200ms + WS 上行。旧代码把它硬编码成 1.0s，
+    #: 而 partial 循环 700ms 才检查一次 ⇒ 真实宽限只有 1.4s，真机上几乎必然误报
+    #: 「麦克风没有声音」。默认放宽到 2.5s，**真机标定后回填**（B2）。
+    mic_warmup_seconds: float = 2.5
+    #: 音频已经在流了之后，多久没有新帧算链路断（mic 被别的 App 抢走 / BLE 掉线）。
+    #: 与 warmup 是两件事：启麦慢是正常的，流到一半断掉不是。
+    mic_gap_seconds: float = 0.8
+
+    def __post_init__(self) -> None:
+        # 配置来自用户手写的 JSON，类型错误比越界更常见（写成 "2.5" 而不是 2.5）。
+        # 不先转类型的话，下面的比较会抛 TypeError，网关带着一句
+        # "'<=' not supported between instances of 'str' and 'int'" 起不来 ——
+        # 用户看不出是哪个键写错了。
+        for field_name in ("mic_warmup_seconds", "mic_gap_seconds", "max_utterance_seconds"):
+            try:
+                object.__setattr__(self, field_name, float(getattr(self, field_name)))
+            except (TypeError, ValueError):
+                raise ValueError(
+                    f"asr.{field_name} 必须是数字，当前是 {getattr(self, field_name)!r}") from None
+        if self.mic_warmup_seconds <= 0 or self.mic_gap_seconds <= 0:
+            raise ValueError("mic_warmup_seconds / mic_gap_seconds 必须为正数")
+        if self.max_utterance_seconds <= self.mic_warmup_seconds:
+            # 否则看门狗还没来得及判定，整句就先被超长截断了
+            raise ValueError("max_utterance_seconds 必须大于 mic_warmup_seconds")
 
 
 @dataclass
@@ -94,8 +143,20 @@ class Config:
     #: 直连时它是攻击者可随意伪造的请求头，开着等于让配对节流的按来源那一层形同虚设。
     trust_forwarded_for: bool = False
     openclaw: OpenClawConfig = field(default_factory=OpenClawConfig)
+    agent: AgentConfig = field(default_factory=AgentConfig)
     asr: AsrConfig = field(default_factory=AsrConfig)
     composer: ComposerConfig = field(default_factory=ComposerConfig)
+
+    @property
+    def agent_label(self) -> str:
+        """状态条徽记：跟着当前 provider 走，而不是恒定读 openclaw 那一份。"""
+        return (self.agent.agent_label if self.agent.provider == "lens"
+                else self.openclaw.agent_label)
+
+    @property
+    def agent_name(self) -> str:
+        return (self.agent.agent_name if self.agent.provider == "lens"
+                else self.openclaw.agent_name)
 
     @staticmethod
     def load(path: Path | None = None) -> "Config":
@@ -106,7 +167,8 @@ class Config:
             for key in ("host", "port", "plugin_dist", "trust_forwarded_for"):
                 if key in raw:
                     setattr(cfg, key, raw[key])
-            for key, cls in (("openclaw", OpenClawConfig), ("asr", AsrConfig), ("composer", ComposerConfig)):
+            for key, cls in (("openclaw", OpenClawConfig), ("agent", AgentConfig),
+                             ("asr", AsrConfig), ("composer", ComposerConfig)):
                 if key not in raw:
                     continue
                 known = cls().__dict__

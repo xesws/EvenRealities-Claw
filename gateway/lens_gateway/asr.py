@@ -24,6 +24,73 @@ class FinalResult:
     avg_logprob: float  # 置信代理：低于阈值 → 确认态延长倒计时
 
 
+#: 归一化时抹掉的字符：标点与空白。只用于**判等**，不改上屏文本。
+_PUNCT = str.maketrans("", "", " \t\n,.，。、？?！!：:；;「」『』\"'（）()")
+
+
+def _strip_punct(text: str) -> str:
+    return text.translate(_PUNCT)
+
+
+def _hotword_entries(hotwords: str) -> list[str]:
+    """把热词表拆成词条。分隔符就是写热词时用的那几个标点。"""
+    out, cur = [], []
+    for ch in hotwords:
+        if ch in "、，,。.;；\n ":
+            if cur:
+                out.append("".join(cur))
+                cur = []
+        else:
+            cur.append(ch)
+    if cur:
+        out.append("".join(cur))
+    return out
+
+
+def prompt_echo(text: str, hotwords: str) -> bool:
+    """这段转写是不是把热词表**原样吐了回来**？
+
+    whisper 的热词是通过 `initial_prompt` 注入的，解码器被这段文字条件化了。
+    音频过短或近似静音时，它没有内容可转，就顺着上下文把提示词继续写下去 ——
+    实测：用户说「停」（0.6s），转写结果是 ``链路、网关。``，
+    正是热词串 ``…眼镜、链路、网关。`` 的尾巴。
+
+    这是最坏的一类错误：屏幕上会以**用户自己的话**的名义显示一段他没说过的文字，
+    而且这段文字会被当成问题发给 agent。
+
+    判据是「去标点后等于热词表里**连续两个或更多**词条的拼接」。
+
+    这里的"两个"是关键，第一版判据错在这上面：它取的是"是热词表的子串"，
+    于是**每一个热词单说都会被丢掉** —— 用户说「眼镜」「网关」「小龙虾」，
+    屏幕上什么都不会出现。而单个词条恰恰是完全正常的说法（回答"哪一个？"、
+    或者一句话的开头）。回声的特征不是"由热词构成"，而是"照着表的顺序连着念下去"，
+    正常说话不会这样。
+
+    误判的代价是「没听清，请再说一次」，漏判的代价是系统凭空编造用户的话。
+    两者不对称，所以在"连续多词条"这个判据内部仍然从严（只要连上两条就拦）。
+
+    已知局限：只拦**整句**回声。混在真实内容里的片段回声（``链路、网关。停``）
+    拦不住 —— 那种情况下真实内容还在，危害小得多。
+    """
+    if not hotwords:
+        return False
+    stripped = _strip_punct(text)
+    if not stripped:
+        return False
+    entries = [_strip_punct(e) for e in _hotword_entries(hotwords)]
+    entries = [e for e in entries if e]
+    # 连续 ≥2 个词条的拼接，逐个起点试过去
+    for i in range(len(entries) - 1):
+        joined = ""
+        for j in range(i, len(entries)):
+            joined += entries[j]
+            if j > i and joined == stripped:
+                return True
+            if len(joined) > len(stripped):
+                break
+    return False
+
+
 def _common_prefix(a: str, b: str) -> str:
     n = min(len(a), len(b))
     i = 0
@@ -100,6 +167,9 @@ class AsrEngine:
             texts.append(seg.text)
             logprobs.append(seg.avg_logprob)
         text = "".join(texts).strip()
+        if prompt_echo(text, self.cfg.hotwords):
+            log.warning("丢弃热词回声转写：%r（音频 %.1fs）", text, len(audio) / 16000)
+            return "", -2.0
         avg = float(np.mean(logprobs)) if logprobs else -2.0
         return text, avg
 

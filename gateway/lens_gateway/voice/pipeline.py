@@ -14,7 +14,7 @@ from ..asr import AsrEngine, StablePrefixTracker
 from ..config import Config
 from ..device import HudDevice, style_header
 from ..formatting import tail_window
-from ..openclaw import OpenClawClient
+from ..providers.base import AgentProvider
 
 log = logging.getLogger(__name__)
 
@@ -25,7 +25,7 @@ def fmt_secs(s: float) -> str:
 
 
 class VoicePipeline:
-    def __init__(self, hud: HudDevice, cfg: Config, asr: AsrEngine, claw: OpenClawClient,
+    def __init__(self, hud: HudDevice, cfg: Config, asr: AsrEngine, claw: AgentProvider,
                  session_key: str):
         self.hud = hud
         self.cfg = cfg
@@ -36,6 +36,9 @@ class VoicePipeline:
         self._pcm = bytearray()
         self._listen_started = 0.0
         self._last_audio = 0.0
+        #: 本轮聆听是否已经收到过音频。看门狗的判据取决于它：还没开始 ⇒ 是启麦慢，
+        #: 已经在流 ⇒ 是链路断。两者的合理等待时间差好几倍，混在一起必然错判一边。
+        self._audio_started = False
         self._tracker = StablePrefixTracker()
         self._partial_task: asyncio.Task | None = None
         self._confirm_task: asyncio.Task | None = None
@@ -70,6 +73,7 @@ class VoicePipeline:
             return
         self._pcm.extend(data)
         self._last_audio = time.monotonic()
+        self._audio_started = True
         max_bytes = int(self.cfg.asr.max_utterance_seconds * 16000) * 2
         if len(self._pcm) >= max_bytes:  # 软上限：自动松手（R10）
             await self.ptt_stop()
@@ -85,6 +89,7 @@ class VoicePipeline:
         self.hud.listening = True
         self._listen_started = time.monotonic()
         self._last_audio = self._listen_started
+        self._audio_started = False
         # 用户开口 ⇒ 屏幕无条件归语音链路（会抢占 MCP 的写屏租约）
         self.hud.emit("S2", self.hud.status_line("S2", "0:00"), "", urgent=True)
         if self._partial_task is None or self._partial_task.done():
@@ -98,9 +103,16 @@ class VoicePipeline:
                 await asyncio.sleep(interval)
                 if not self.listening:
                     break
-                elapsed = time.monotonic() - self._listen_started
-                # mic 看门狗（R2）：>800ms 无音频帧 = mic 被抢/链路断
-                if time.monotonic() - self._last_audio > 0.8 and elapsed > 1.0:
+                now = time.monotonic()
+                elapsed = now - self._listen_started
+                # mic 看门狗（R2/B2）。**两种沉默，两个判据**：
+                #   还没收到过任何一帧 ⇒ 是启麦慢（BLE 下发 + 固件启麦 + 首帧回传），
+                #     给 mic_warmup_seconds；旧代码这里硬编码 1.0s，真机几乎必然误报。
+                #   已经在流又断了   ⇒ 是 mic 被抢或链路断，给 mic_gap_seconds（短得多）。
+                silent_for = (now - self._last_audio) if self._audio_started else elapsed
+                budget = (self.cfg.asr.mic_gap_seconds if self._audio_started
+                          else self.cfg.asr.mic_warmup_seconds)
+                if silent_for > budget:
                     hud.emit("S2", hud.status_line("S2", word="无音频", glyph=hud.glyphs["warning"]),
                              "麦克风没有声音\n请松开重试", urgent=True)
                     continue
@@ -151,7 +163,10 @@ class VoicePipeline:
         wait = (self.cfg.composer.confirm_seconds_low_conf if low_conf
                 else self.cfg.composer.confirm_seconds)
         hint = "请核对文字…" if low_conf else ""
-        hud.emit("S3", f'{hud.glyphs["transcribing"]} {self.cfg.openclaw.agent_name}',
+        # 走 status_line 而不是自己拼串：状态条只有一个入口（修 S2 时立的规矩），
+        # 自己拼会丢掉徽记 —— 而这恰恰是"即将发给哪个 agent"那一帧，最需要徽记。
+        # 徽记本身由 `HudDevice` 的溯源探针每帧现算，这里不需要取样。
+        hud.emit("S3", hud.status_line("S3", word=self.cfg.agent_name),
                  result.text, hint, urgent=True)
         self._confirm_task = asyncio.ensure_future(self._confirm_then_send(result.text, wait))
 
@@ -167,7 +182,17 @@ class VoicePipeline:
     async def dispatch(self, text: str) -> None:
         hud = self.hud
         self._last_question = text
-        message = text if self._style_sent else style_header(hud.layout.body) + text
+        # 小屏风格：**只有对面是不受控的第三方 agent 时才由网关注入**（AGENT-LAYER §4.1）。
+        # 自研 lens agent 的 system prompt 自带这份契约，网关再塞一遍纯属越权 +
+        # 白烧 token，还会破坏它的缓存前缀稳定性。排版层强制剥 markdown 的兜底两边都留着。
+        needs_style = self.claw.injects_style and not self._style_sent
+        message = style_header(hud.layout.body) + text if needs_style else text
+        # W6：这一轮到底是谁在回答 —— 是替身就让状态条徽记带上「?」，屏幕自己告状。
+        # 这里**不取样**：`HudDevice` 的溯源探针每帧现算，握手一旦完成，下一帧的
+        # 徽记立刻跟上。曾经在这里先 `ensure_connected()` 再取样过一版，那样做会
+        # 把冷启动的握手延迟压在 S3 上（屏幕停在确认帧不动），换来的只是 S4 首帧
+        # 早一秒准确 —— 而 S4 的正文是用户自己刚说的话，还没有 agent 的任何输出。
+        # 真正需要打标的 S6（回答）/S7（完成）必定在 chat_send 之后，现算必然是对的。
         hud.paginator.reset()
         started = time.monotonic()
         hud.emit("S4", hud.status_line("S4", "0s"), text, urgent=True)
