@@ -103,6 +103,7 @@ class ComposerConfig:
     已移除；`Config.load` 遇到它们会告警并忽略，不会让网关起不来。
     """
 
+    locale: str = "zh"                   # 屏上文字语言：zh / en（字形档位另见 glyph_profile）
     glyph_profile: str = "symbol"        # HUD 字形档位：symbol / cjk / ascii
     glyph_overrides: dict[str, str] = field(default_factory=dict)  # 按语义名覆盖单个字形
     body_safety_px: int = 0              # 正文折行的额外退让像素（默认 0：度量与固件逐位一致）
@@ -117,6 +118,9 @@ class ComposerConfig:
     battery_warn_percent: int = 15        # 低于此电量在页脚提示一次（0=关闭）
 
     def __post_init__(self) -> None:
+        if self.locale not in ("zh", "en"):
+            # 早失败：配错了就在加载期报出来，而不是等到第一帧上屏时 KeyError。
+            raise ValueError(f'composer.locale 只能是 "zh" 或 "en"：{self.locale!r}')
         if self.throttle_ms < 0:
             raise ValueError(f"throttle_ms 不能为负：{self.throttle_ms}")
         if self.body_safety_px < 0 or self.body_safety_px >= 200:

@@ -40,7 +40,6 @@ class Paginator:
 
     pages: list[list[str]] = field(default_factory=lambda: [[""]])
     _cur: int = 0
-    _follow: bool = True
     _raw: str = ""
 
     # ---------- 排版 ----------
@@ -68,11 +67,17 @@ class Paginator:
             pages.append(page)
 
         self.pages = pages or [[""]]
-        # 夹紧：重排后页数可能变少（修 F7）
-        if self._follow:
-            self._cur = self.total - 1
-        else:
-            self._cur = max(0, min(self._cur, self.total - 1))
+        # ★ 重排**永远不移动读者**，只把 cur 夹进合法区间（修 F7：页数变少时会越界）。
+        #
+        # 这里曾经是「跟随末页」——流式期间自动翻到最后一页。那在终端里是对的，
+        # 在 8 行的屏幕上是**读不完**：回答一旦超过一页，读者正读着第一页就会被
+        # 甩到末尾，开头再也看不见。真机上抓到的原样：导航那一问在 S6 全程停在
+        # 第 1 页，最后一个 token 落地的瞬间跳到 `2/2`，屏幕上只剩半句结尾。
+        #
+        # Paginator 的三个使用者（S6/S7 回答、MCP 写屏、打断回顾）没有一个需要
+        # 跟随。真正该像实时字幕一样跟着最新的是 S2 的部分转写，它走的是
+        # `tail_window()`，根本不经过这里。
+        self._cur = max(0, min(self._cur, self.total - 1))
 
     def _anchor_for(self, prev_page: list[str]) -> str:
         """续页首行：「…」+ 上一页末行的尾部，按像素截断到不超过锚点预算。"""
@@ -99,12 +104,12 @@ class Paginator:
         return self._cur
 
     @property
-    def follow(self) -> bool:
-        """是否跟随最新页（流式期间自动翻到末页）。"""
-        return self._follow
-
-    @property
     def at_last(self) -> bool:
+        """读者是否停在最后一页。
+
+        流式期间它就是「有没有跟上正在写的那一头」——调用方据此决定要不要在
+        页脚打「还有新内容」的标记。
+        """
         return self._cur >= self.total - 1
 
     def page_text(self, idx: int | None = None) -> str:
@@ -118,15 +123,12 @@ class Paginator:
         if new == self._cur:
             return False
         self._cur = new
-        # 翻回末页即恢复跟随；往回翻则钉住不动
-        self._follow = self.at_last
         return True
 
     def reset(self) -> None:
-        """回到「空内容、跟随最新」的初始态。"""
+        """回到「空内容、停在首页」的初始态。"""
         self.pages = [[""]]
         self._cur = 0
-        self._follow = True
         self._raw = ""
 
     # ---------- 页脚 ----------

@@ -139,11 +139,12 @@ class TestRouting:
         session.hud.paginator.set_text(long_text)
         session.hud.emit("S7", session.hud.status_line("S7"),
                          session.hud.paginator.page_text(), "", urgent=True)
-        last = session.hud.paginator.cur
-        await session.handle_text({"type": "page", "dir": "prev"})
-        assert session.hud.paginator.cur == last - 1
+        assert session.hud.paginator.total > 1, "语料不够长，翻页测不到东西"
+        assert session.hud.paginator.cur == 0, "装载后应停在首页，不该被甩到末页"
         await session.handle_text({"type": "page", "dir": "next"})
-        assert session.hud.paginator.cur == last
+        assert session.hud.paginator.cur == 1
+        await session.handle_text({"type": "page", "dir": "prev"})
+        assert session.hud.paginator.cur == 0
 
     async def test_unknown_message_is_ignored(self, session):
         await session.handle_text({"type": "没见过的类型"})   # 加法安全：不能炸

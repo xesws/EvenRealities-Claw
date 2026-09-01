@@ -46,7 +46,7 @@
 1. [系统形态与仓库地图](#1-系统形态与仓库地图)
 2. [各组件详细说明](#2-各组件详细说明)
 3. [一次问答的完整数据流（含实测耗时）](#3-一次问答的完整数据流)
-4. [验证结果汇总（pytest 437 + vitest 82 + 语音 e2e 31 + MCP e2e 27 + 真 agent e2e 21）](#4-验证结果汇总)
+4. [验证结果汇总（pytest 447 + vitest 82 + 语音 e2e 31 + MCP e2e 27 + 真 agent e2e 21）](#4-验证结果汇总)
 5. [【最重要】拿到眼镜后的完整上手流程](#5-拿到眼镜后的完整上手流程)
 6. [运维手册：服务、配置、日志、更新、**MCP 接入**](#6-运维手册)
 7. [排障速查表](#7-排障速查表)
@@ -121,7 +121,7 @@ EvenRealities-Claw/
 │   │   ├── tools.py           ←   能力枚举只有 READ/WRITE，**没有 exec 档**
 │   │   ├── audit.py           ←   每次工具调用一行 JSON
 │   │   └── llm/deepseek.py    ←   DeepSeek OpenAI 兼容端点（aiohttp 直发，理由见 AGENT-LAYER §6.2）
-│   ├── tests/                 ← 437 单测 + e2e_sim.py（语音 31 项）+ e2e_mcp.py（MCP 27 项）
+│   ├── tests/                 ← 447 单测 + e2e_sim.py（语音 31 项）+ e2e_mcp.py（MCP 27 项）
 │   │                            + e2e_agent.py（真 agent 20 项）+ data/（语音数据集 / HUD golden）
 │   ├── requirements.txt
 │   ├── requirements-mcp.txt   ← MCP 表面的依赖（网关本身不需要）
@@ -316,10 +316,10 @@ version / model / endpoint / production）。`demo/fake_openclaw.py` 会**自报
 
 | 验证 | 范围 | 结果 |
 |---|---|---|
-| `gateway/tests/`（pytest，全量） | 下列各专项之和：排版引擎/配对/JWT/设备抽象/遥测/控制面鉴权/控制面路由/MCP 工具/agent 层/ASR 质量/mic 看门狗/HUD golden/provider 连接生命周期 | **437/437** |
-| 排版与认证 | 字形度量/折行禁则/像素盒分页/净化/markdown 降级/版式契约/配对/JWT/吊销/过期/持久化，含 3 宽度 × 31 语料的参数化不变量与 600 例随机模糊 | **168/168** |
+| `gateway/tests/`（pytest，全量） | 下列各专项之和：排版引擎/配对/JWT/设备抽象/遥测/控制面鉴权/控制面路由/MCP 工具/agent 层/ASR 质量/mic 看门狗/HUD golden/provider 连接生命周期 | **447/447** |
+| 排版与认证 | 字形度量/折行禁则/像素盒分页/净化/markdown 降级/版式契约/配对/JWT/吊销/过期/持久化，含 3 宽度 × 31 语料的参数化不变量与 600 例随机模糊 | **169/169** |
 | **设备抽象层**（`tests/test_device.py`） | 帧节流与 coalescing、seq 单调、状态迁移、翻页四触发源等价与边界、租约冲突/续租/过期/抢占、外部渲染走同一排版引擎、事件缓冲增量拉取、快照结构 | **24/24** |
-| **会话装配与回收**（`tests/test_session.py`） | S5 工具态接活、错误分支、`reset` 重新注入小屏风格、消息路由、会话 TTL 只回收「离线且静默」、启动钩子只注册一次、ASR warmup 幂等 | **16/16** |
+| **会话装配与回收**（`tests/test_session.py`） | S5 工具态接活、错误分支、`reset` 重新注入小屏风格、消息路由、会话 TTL 只回收「离线且静默」、启动钩子只注册一次、ASR warmup 幂等 | **19/19** |
 | **排版引擎 vs 官方 pretext** | 17 075 码点的 advance + 1 376 个折行用例逐条比对（外部 oracle） | **零分歧** |
 | 插件构建链 | `npm install && tsc --noEmit && vite build`（strict 模式） | 全绿 |
 | 插件桥接冒烟（vitest + jsdom） | 真 SDK + 真 `GlassesController` + 保真夹具：建页只能一次/rebuild 接力、写失败不毒化去重缓存、BLE 卡死 5s 超时、缺字静默丢弃、折行与 pretext 一致、溢出裁行、前台进出 vs 真退出、5 手势 × 4 来源、未知 eventType 不变幽灵翻页、**遥测组装与 R1 戒指过滤**、麦被抢 | **30/30** |
@@ -432,9 +432,21 @@ http://<SERVER_IP>:8443/plugin/harness/harness.html
 ```bash
 export LENS_LLM_API_KEY=sk-...
 ./demo/start.sh --lens     # 推荐：拉起自研 agent，直连 DeepSeek
+./demo/start.sh --lens --en  # 同上，全英文演示
 ./demo/start.sh --real     # 连本机真的 OpenClaw 网关
 ./demo/start.sh            # 替身模式，离线调链路用
 ```
+
+`--en` 一次切三处，缺一处画面就中英混杂：眼镜 HUD 的状态词与 agent 的作答语言
+（`composer.locale` + `LENS_AGENT_LOCALE`）、whisper 的解码语言与热词
+（`asr.language` / `asr.hotwords` —— 默认是 zh，**拿中文热词当英文语音的
+`initial_prompt` 是错的偏置**）、手机端 UI 文案（`?lang=en`，脚本会把它拼进打印的地址）。
+眼镜屏上的字**不归插件管**——它由网关整帧下发，插件一个字都不该改，
+否则同一帧在手机预览屏和眼镜上会长得不一样。
+
+不用浏览器也能验：`demo/verify_audio.py` 自己就是一台设备，拿一段 WAV 当麦克风
+把整条链路跑一遍并打印帧序列（`demo/audio/` 下有两段现成的英文提问，
+分别演示真工具调用与长回答分页）。
 
 ⚠️ **替身模式不是可以拿去演示的东西**：`demo/fake_openclaw.py` 在握手里自报
 `fixture: true`，网关会据此在状态条徽记上打「?」（W6）。**屏幕自己会告状，这是有意的。**
@@ -523,7 +535,7 @@ systemctl --user restart lens-gateway
 ```bash
 cd ~/EvenRealities-Claw/gateway
 .venv/bin/pip install -r requirements-dev.txt      # 测试依赖（pytest / pytest-asyncio / mcp）
-PYTHONPATH=. .venv/bin/pytest tests/ -q            # 437 单测，秒级
+PYTHONPATH=. .venv/bin/pytest tests/ -q            # 447 单测，秒级
 PYTHONPATH=. .venv/bin/python tests/e2e_sim.py     # 语音端到端，自足运行（~2 分钟）
 PYTHONPATH=. .venv/bin/python tests/e2e_mcp.py     # MCP 四进程真链路（~30 秒）
 
@@ -666,6 +678,24 @@ claude mcp add --transport http even-glasses http://127.0.0.1:8765/mcp
    实测拆开是**等锁 9.5s + 真正解码 0.35s**。修复：钩子合并成一个 + `warmup()` 幂等，
    松手→上屏回到 **0.4s**；两条都有回归单测（`tests/test_session.py`）。
    教训是**测总耗时不够，要能拆出"等待"与"计算"各占多少**——否则这类问题会被归咎于模型太慢。
+6. **两页的回答根本读不完**：`Paginator` 的流式重排原本「跟随末页」——终端里 tail 输出的
+   习惯做法。8 行的屏幕上它是有害的：回答一旦超过一页，读者正读着第一页，最后一个 token
+   落地的瞬间画面就跳到 `2/2`，只剩半句结尾，开头再也看不见。
+
+   这个缺陷**单测和 golden 全绿的情况下存在了很久**，因为快照忠实记录的正是错的行为，
+   而 `test_follow_tracks_last_page_while_streaming` 把它写成了断言。是拿真语音跑英文
+   演示、看导航那一问的收尾帧时才发现的——**没有哪个测试会告诉你「这个屏幕没法读」**。
+
+   修复：重排永远不移动读者，只把 `cur` 夹进合法区间。判据是 `Paginator` 的三个使用者
+   （S6/S7 回答、MCP 写屏、打断回顾）没有一个需要跟随；真正该像实时字幕跟着最新的是
+   S2 的部分转写，而它走 `tail_window()`，根本不经过分页器。顺带删掉了 `_follow` 字段，
+   语义并入 `at_last`。
+
+   收尾帧从 `‹ 2/2` 的半句结尾变成 `1/2 ›` 的答案开头，页脚告诉读者还有下一页。
+   两条新回归测试都做过变异测试（把逻辑改回跟随末页，测试必须失败）——其中
+   `test_streaming_never_moves_the_reader` 第一版**没能咬住**，因为它复用的流式语料
+   全都只有一页，`cur` 恒为 0，跟随与否都测不出来；换成真会跨页的语料才生效。
+   golden 快照的 3 处 diff 逐帧核对过再重生成的。
 
 ## 12. 阶段三预告（设计已定稿，未开发）
 

@@ -192,13 +192,17 @@ async def scene_with_tool_call(session):
 
 
 async def scene_paging_after_answer(session):
-    # 流式跟随会把画面停在**末页**，所以顺序必须是先往回翻，否则「下一页」是空操作
+    # 定稿后画面停在**首页**（重排不移动读者），所以顺序是先往后翻
     await _speak(session)
-    session.hud.page(-1, source="glasses")   # → 首页
+    session.hud.page(-1, source="glasses")   # 已在首页：不该发冗余帧
     await asyncio.sleep(0)
     session.hud.page(1, source="phone")      # → 末页
     await asyncio.sleep(0)
-    session.hud.page(1, source="mcp")        # 已在末页：不该再发冗余帧
+    session.hud.page(-1, source="mcp")       # → 回首页
+    await asyncio.sleep(0)
+    session.hud.page(1, source="voice")      # → 末页
+    await asyncio.sleep(0)
+    session.hud.page(1, source="glasses")    # 已在末页：不该再发冗余帧
     await asyncio.sleep(0)
 
 
@@ -247,11 +251,11 @@ async def scene_abort_midway(session):
 
 
 async def scene_markdown_leaks_from_model(session):
-    # 流式跟随会把画面停在末页 ⇒ 只有末页会成帧。必须把每一页都翻出来发一遍，
-    # 否则「正文里没有裸 markdown」这条不变量只检查到了最后一页。
+    # 定稿停在首页 ⇒ 只有首页会成帧。必须把每一页都翻出来发一遍，
+    # 否则「正文里没有裸 markdown」这条不变量只检查到了第一页。
     await _speak(session)
     for _ in range(session.hud.paginator.total - 1):
-        session.hud.page(-1, source="glasses")
+        session.hud.page(1, source="glasses")
         await asyncio.sleep(0)
 
 

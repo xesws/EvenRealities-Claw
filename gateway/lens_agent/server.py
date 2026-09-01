@@ -60,14 +60,20 @@ class LensAgentServer:
         })
 
     def hello(self) -> dict:
+        # 这份自我介绍会原样出现在网关的 `/healthz` 里 —— 它就是 W6 溯源的证据本身，
+        # 演示时当场 `curl` 就能自证「对面不是替身」。所以它也要跟着 locale 走，
+        # 否则英文演示里蹦出一个中文名字，看的人只会觉得这里有东西没对齐。
         return {
             "protocol": PROTOCOL,
-            "agent": "小龙虾",
+            "agent": tools._t("小龙虾", "Lens"),
             "version": VERSION,
             "model": self.llm.model,
             # 真模型答的就是 production。替身不会走到这个文件里 —— 它是另一个进程。
             "production": True,
-            "note": f"自研 lens agent，模型 {self.llm.model}（{self.llm.name}）",
+            "note": tools._t(
+                f"自研 lens agent，模型 {self.llm.model}（{self.llm.name}）",
+                f"first-party lens agent, model {self.llm.model} ({self.llm.name})",
+            ),
         }
 
     async def handle_ws(self, req: web.Request) -> web.WebSocketResponse:

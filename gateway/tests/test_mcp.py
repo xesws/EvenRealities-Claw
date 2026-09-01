@@ -124,10 +124,11 @@ class TestDeviceTools:
         lid = show["lease_id"]
         assert show["lease_expires_in_ms"] > 0
 
+        assert show["page"]["cur"] == 1, "写屏后应停在首页"
         turned = payload(await env["mcp"].call_tool(
-            "hud_page", {"device_id": env["id"], "lease_id": lid, "direction": "prev"}))
+            "hud_page", {"device_id": env["id"], "lease_id": lid, "direction": "next"}))
         assert turned["turned"] is True
-        assert turned["page"]["cur"] == show["page"]["cur"] - 1
+        assert turned["page"]["cur"] == show["page"]["cur"] + 1
 
         cleared = payload(await env["mcp"].call_tool(
             "hud_clear", {"device_id": env["id"], "lease_id": lid}))

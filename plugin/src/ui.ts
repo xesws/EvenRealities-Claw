@@ -3,6 +3,7 @@
  * 两个屏：配对屏（网关地址 + 6 位配对码）/ 主屏（按住说话、状态行、眼镜画面预览、
  * ●REC、打断/清屏、设置、眼镜连接状态+电量）。
  */
+import { t } from './strings';
 import { CANVAS, LAYOUT, LINE_HEIGHT } from './hud';
 import './style.css';
 import type { FrameContainers, FrameMessage } from './types';
@@ -64,29 +65,29 @@ export class LensUi {
     root.innerHTML = `
       <header class="topbar">
         <div class="brand">Open<span class="claw">Claw</span> Lens</div>
-        <div class="conn-pill" data-el="connPill">未连接</div>
+        <div class="conn-pill" data-el="connPill">${t.connIdle}</div>
       </header>
       <div class="notice" data-el="notice" hidden></div>
 
       <section class="screen" data-el="screenPair" hidden>
-        <h1>配对网关</h1>
-        <label class="field">网关地址
+        <h1>${t.pairTitle}</h1>
+        <label class="field">${t.fieldGateway}
           <input data-el="pairUrl" type="text" autocapitalize="off" autocomplete="off"
                  spellcheck="false" placeholder="wss://example.com/ws">
         </label>
-        <label class="field">配对码
+        <label class="field">${t.fieldPairCode}
           <input data-el="pairCode" class="code" type="text" inputmode="numeric"
                  maxlength="6" placeholder="······">
         </label>
-        <button class="primary" data-el="pairBtn">配对</button>
+        <button class="primary" data-el="pairBtn">${t.pairBtn}</button>
         <p class="error" data-el="pairError" hidden></p>
-        <p class="hint">在网关服务器上执行 lens-gateway pair-code 生成配对码（10 分钟有效，一次性）。</p>
+        <p class="hint">${t.pairHint}</p>
       </section>
 
       <section class="screen" data-el="screenMain" hidden>
         <div class="statusline">
           <span class="rec" data-el="recDot" hidden>●REC</span>
-          <span data-el="statusText">待机</span>
+          <span data-el="statusText">${t.statusIdle}</span>
         </div>
         <div class="preview-wrap" data-el="previewWrap">
           <div class="preview" data-el="preview">
@@ -95,20 +96,20 @@ export class LensUi {
             <div class="pv pv-foot" data-el="pvFoot"></div>
           </div>
         </div>
-        <div class="glasses-row" data-el="glassesRow">眼镜：未知</div>
-        <button class="ptt" data-el="pttBtn">按住说话</button>
+        <div class="glasses-row" data-el="glassesRow">${t.glassesUnknown}</div>
+        <button class="ptt" data-el="pttBtn">${t.ptt}</button>
         <div class="btnrow">
-          <button data-el="abortBtn">打断</button>
-          <button data-el="resetBtn">清屏</button>
-          <button data-el="settingsBtn">设置</button>
+          <button data-el="abortBtn">${t.abort}</button>
+          <button data-el="resetBtn">${t.reset}</button>
+          <button data-el="settingsBtn">${t.settings}</button>
         </div>
         <section class="settings" data-el="settings" hidden>
-          <label class="field">网关地址
+          <label class="field">${t.fieldGateway}
             <input data-el="settingsUrl" type="text" autocapitalize="off"
                    autocomplete="off" spellcheck="false">
           </label>
-          <button data-el="settingsSave">保存并重连</button>
-          <button class="danger" data-el="repairBtn">重新配对</button>
+          <button data-el="settingsSave">${t.save}</button>
+          <button class="danger" data-el="repairBtn">${t.repair}</button>
         </section>
       </section>
     `;
@@ -160,11 +161,11 @@ export class LensUi {
       const url = e.pairUrl.value.trim();
       const code = e.pairCode.value.trim();
       if (!/^wss?:\/\//.test(url)) {
-        this.showPairError('网关地址必须以 ws:// 或 wss:// 开头');
+        this.showPairError(t.pairBadUrl);
         return;
       }
       if (!/^\d{6}$/.test(code)) {
-        this.showPairError('请输入 6 位数字配对码');
+        this.showPairError(t.pairBadCode);
         return;
       }
       this.showPairError('');
@@ -183,7 +184,7 @@ export class LensUi {
         // 某些 WebView 不支持，忽略
       }
       ptt.classList.add('active');
-      ptt.textContent = '松开发送 · 上滑取消';
+      ptt.textContent = t.pttActive;
       this.cb.onPttStart();
     });
     ptt.addEventListener('pointerup', () => {
@@ -207,7 +208,7 @@ export class LensUi {
     e.settingsSave.addEventListener('click', () => {
       const url = e.settingsUrl.value.trim();
       if (!/^wss?:\/\//.test(url)) {
-        this.toast('网关地址必须以 ws:// 或 wss:// 开头');
+        this.toast(t.pairBadUrl);
         return;
       }
       this.cb.onSettingsSave(url);
@@ -225,7 +226,7 @@ export class LensUi {
     this.pttPressed = active;
     const ptt = this.els.pttBtn;
     ptt.classList.toggle('active', active);
-    ptt.textContent = active ? '松开发送 · 上滑取消' : '按住说话';
+    ptt.textContent = active ? t.pttActive : t.ptt;
   }
 
   private endPtt(): void {
@@ -303,7 +304,7 @@ export class LensUi {
   /** 镜像渲染帧：状态行 + 眼镜画面预览 + ●REC。 */
   setFrame(frame: FrameMessage): void {
     this.setPreview(frame.containers);
-    this.els.statusText.textContent = frame.containers.status || '待机';
+    this.els.statusText.textContent = frame.containers.status || t.statusIdle;
     this.els.recDot.hidden = !frame.meta?.rec;
   }
 

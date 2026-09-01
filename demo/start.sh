@@ -5,6 +5,14 @@
 #   ./demo/start.sh --real    连本机真的 OpenClaw 网关（需它已在 18789 上跑着）
 #   ./demo/start.sh           替身模式：agent 换成 demo/fake_openclaw.py（离线调链路时用）
 #
+#   追加 --en 走英文演示（只能与 --lens 合用）：
+#   ./demo/start.sh --lens --en
+#   英文模式会同时切三处，缺一处画面就会中英混杂：
+#     · 眼镜 HUD 的状态词与 agent 的作答语言（网关 composer.locale + LENS_AGENT_LOCALE）
+#     · whisper 的解码语言与热词（asr.language / asr.hotwords —— 默认是 zh，
+#       拿中文热词当英文语音的 initial_prompt 是错的偏置）
+#     · 手机端 UI 文案（打开页面时加 ?lang=en，见 plugin/src/strings.ts）
+#
 # 三种模式下，麦克风、faster-whisper 转写、HUD 状态机、折行分页、渲染节流
 # 全部是同一套真实代码路径，差别只在 chat.send 的对端是谁。
 #
@@ -21,12 +29,20 @@ AGENT_PORT=18789
 AGENT_PORT_LENS=18790
 
 MODE=demo
-case "${1:-}" in
-  --real) MODE=real ;;
-  --lens) MODE=lens ;;
-  "") ;;
-  *) echo "未知参数：$1（可用：--lens / --real / 不带参数）"; exit 1 ;;
-esac
+LOCALE=zh
+for arg in "$@"; do
+  case "${arg}" in
+    --real) MODE=real ;;
+    --lens) MODE=lens ;;
+    --en)   LOCALE=en ;;
+    *) echo "未知参数：${arg}（可用：--lens / --real / --en）"; exit 1 ;;
+  esac
+done
+if [ "${LOCALE}" = en ] && [ "${MODE}" != lens ]; then
+  echo "✗ --en 只能与 --lens 合用：英文作答要靠 lens_agent 的 LENS_AGENT_LOCALE，"
+  echo "  替身和外部 OpenClaw 的输出语言不归本仓库管。"
+  exit 1
+fi
 
 [ -x "${PY}" ] || { echo "缺少虚拟环境，先执行："; echo "  python3 -m venv gateway/.venv && gateway/.venv/bin/pip install -r gateway/requirements.txt"; exit 1; }
 
@@ -58,7 +74,13 @@ except Exception as e:
   [ -f "${LENS_STATE_DIR}/config.json" ] || printf '{\n  "host": "127.0.0.1",\n  "port": %s\n}\n' "${PORT}" > "${LENS_STATE_DIR}/config.json"
   echo "▸ 真实模式：连 127.0.0.1:${AGENT_PORT} 的 OpenClaw，状态目录 ${LENS_STATE_DIR}"
 elif [ "${MODE}" = lens ]; then
-  export LENS_STATE_DIR="${HOME}/.lens-gateway-lens"
+  # 中英各用一个状态目录：配对记录和 config 都不该互相污染。
+  # 中文仍走原来的 ~/.lens-gateway-lens —— 不能因为加了英文模式就把已有配对搬家。
+  if [ "${LOCALE}" = en ]; then
+    export LENS_STATE_DIR="${HOME}/.lens-gateway-lens-en"
+  else
+    export LENS_STATE_DIR="${HOME}/.lens-gateway-lens"
+  fi
   mkdir -p "${LENS_STATE_DIR}"; chmod 700 "${LENS_STATE_DIR}"
 
   # key 只从环境读，绝不落盘、绝不进仓库
@@ -70,17 +92,23 @@ elif [ "${MODE}" = lens ]; then
   lsof -nP -iTCP:${AGENT_PORT_LENS} -sTCP:LISTEN >/dev/null 2>&1 && {
     echo "✗ 端口 ${AGENT_PORT_LENS} 已被占用，先停掉旧的 lens agent。"; exit 1
   }
+  if [ "${LOCALE}" = en ]; then
+    AGENT_JSON='"provider": "lens", "url": "ws://127.0.0.1:'"${AGENT_PORT_LENS}"'", "agent_label": "Lens", "agent_name": "Lens"'
+    L10N_JSON='"asr": { "language": "en", "hotwords": "Even Realities, G2, Lens, gateway, glasses, agent." },
+  "composer": { "locale": "en" },'
+  else
+    AGENT_JSON='"provider": "lens", "url": "ws://127.0.0.1:'"${AGENT_PORT_LENS}"'"'
+    L10N_JSON=''
+  fi
   cat > "${LENS_STATE_DIR}/config.json" <<JSON
 {
   "host": "127.0.0.1",
   "port": ${PORT},
-  "agent": {
-    "provider": "lens",
-    "url": "ws://127.0.0.1:${AGENT_PORT_LENS}"
-  }
+  ${L10N_JSON}
+  "agent": { ${AGENT_JSON} }
 }
 JSON
-  echo "▸ 自研 agent 模式：lens_agent → DeepSeek，状态目录 ${LENS_STATE_DIR}"
+  echo "▸ 自研 agent 模式（${LOCALE}）：lens_agent → DeepSeek，状态目录 ${LENS_STATE_DIR}"
 else
   # 演示状态目录独立于生产的 ~/.lens-gateway/，互不干扰
   export LENS_STATE_DIR="${HOME}/.lens-gateway-demo"
@@ -123,7 +151,7 @@ if [ "${MODE}" = demo ]; then
 elif [ "${MODE}" = lens ]; then
   echo "▸ 启动自研 agent ws://127.0.0.1:${AGENT_PORT_LENS} …"
   (cd "${ROOT}/gateway" && PYTHONPATH=. LENS_AGENT_PORT="${AGENT_PORT_LENS}" \
-     "${PY}" -m lens_agent.server) & PIDS+=($!)
+     LENS_AGENT_LOCALE="${LOCALE}" "${PY}" -m lens_agent.server) & PIDS+=($!)
   for _ in $(seq 1 20); do
     curl -s -m 1 "http://127.0.0.1:${AGENT_PORT_LENS}/healthz" >/dev/null 2>&1 && break
     sleep 0.5
@@ -146,12 +174,15 @@ done
 HEALTH=$(curl -s -m 2 "http://127.0.0.1:${PORT}/healthz" 2>/dev/null || echo '{}')
 echo "${HEALTH}" | grep -q '"connected": true' || echo "⚠ healthz 显示 agent 侧未连上：${HEALTH}"
 
+LANG_Q=""
+[ "${LOCALE}" = en ] && LANG_Q="?lang=en"
+
 CODE=$(cd "${ROOT}/gateway" && PYTHONPATH=. "${PY}" -m lens_gateway.main pair-code | grep -o '[0-9]\{6\}')
 
 cat <<EOF
 
 ──────────────────────────────────────────────────────────
-  浏览器打开： http://127.0.0.1:${PORT}/plugin/harness/harness.html
+  浏览器打开： http://127.0.0.1:${PORT}/plugin/harness/harness.html${LANG_Q}
   配对码：     ${CODE}
   首次进入需允许麦克风权限，否则眼镜屏会显示「无音频」。
 

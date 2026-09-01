@@ -294,7 +294,7 @@ export function installEvenHostMock(opts: MockOptions): EvenHostMock {
   function pushToSdk(method: string, data: unknown): void {
     const w = window as unknown as { _listenEvenAppMessage?: (m: unknown) => void };
     if (typeof w._listenEvenAppMessage !== 'function') {
-      log(`(SDK 尚未加载，丢弃 ${method} 推送)`);
+      log(`(SDK not loaded yet, dropping ${method} push)`);
       return;
     }
     w._listenEvenAppMessage({ type: 'listen_even_app_data', method, data });
@@ -330,7 +330,7 @@ export function installEvenHostMock(opts: MockOptions): EvenHostMock {
     const { kept, dropped } = dropMissingGlyphs(def.content ?? '');
     if (dropped.length) {
       stats.droppedGlyphs += dropped.length;
-      log(`⚠ ${name}：静默丢弃 ${dropped.length} 个字库外字符 → ${dropped.join(' ')}`);
+      log(`! ${name}: silently dropped ${dropped.length} char(s) outside the font -> ${dropped.join(' ')}`);
     }
 
     const lines = wrapForFirmware(kept, innerW);
@@ -338,7 +338,7 @@ export function installEvenHostMock(opts: MockOptions): EvenHostMock {
     if (!kept.includes('\n')) {
       const official = measureTextWrap(kept, innerW).lineCount;
       if (kept !== '' && official !== lines.length) {
-        log(`⚠ ${name}：折行行数与 pretext 不一致（本地 ${lines.length} / 官方 ${official}）`);
+        log(`! ${name}: line count disagrees with pretext (ours ${lines.length} / official ${official})`);
       }
     }
     if (lines.length > maxLines) {
@@ -411,7 +411,7 @@ export function installEvenHostMock(opts: MockOptions): EvenHostMock {
         opts.screen.innerHTML = '';
         containers.clear();
         pageCreated = false;
-        log('用户确认退出 → 推送 SYSTEM_EXIT_EVENT');
+        log('user confirmed exit -> pushing SYSTEM_EXIT_EVENT');
         pushHubEvent('sysEvent', { eventType: EVT.SYSTEM_EXIT });
       });
       overlay.appendChild(btn);
@@ -429,7 +429,7 @@ export function installEvenHostMock(opts: MockOptions): EvenHostMock {
    */
   function validatePage(textObject: TextContainerDef[], totalNum: number): CreateResult | null {
     const fail = (code: CreateResult, why: string): CreateResult => {
-      log(`建页校验失败（返回 ${code}）：${why}`);
+      log(`page validation failed (returned ${code}): ${why}`);
       return code;
     };
     if (totalNum < 1 || totalNum > TOTAL_MAX) return fail(1, `containerTotalNum=${totalNum} 不在 1~${TOTAL_MAX}`);
@@ -499,7 +499,7 @@ export function installEvenHostMock(opts: MockOptions): EvenHostMock {
 
   async function startMic(): Promise<boolean> {
     if (faults.micDenied) {
-      log('故障注入：麦克风被占用 → audioControl(true) 返回 false');
+      log('fault injection: mic held by another app -> audioControl(true) returns false');
       return false;
     }
     if (micOpen) return true;
@@ -508,7 +508,7 @@ export function installEvenHostMock(opts: MockOptions): EvenHostMock {
         audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true },
       });
     } catch (err) {
-      log(`麦克风获取失败：${err instanceof Error ? err.message : String(err)}`);
+      log(`could not open the mic: ${err instanceof Error ? err.message : String(err)}`);
       return false;
     }
     audioCtx = new AudioContext();
@@ -538,7 +538,7 @@ export function installEvenHostMock(opts: MockOptions): EvenHostMock {
     sink.connect(audioCtx.destination);
     micOpen = true;
     opts.onMicState?.(true);
-    log(`麦克风已打开（输入 ${audioCtx.sampleRate}Hz → 16kHz s16le mono，~100ms/块）`);
+    log(`mic open (input ${audioCtx.sampleRate}Hz -> 16kHz s16le mono, ~100ms per chunk)`);
     return true;
   }
 
@@ -553,7 +553,7 @@ export function installEvenHostMock(opts: MockOptions): EvenHostMock {
     pcmCarry = [];
     micOpen = false;
     opts.onMicState?.(false);
-    log('麦克风已关闭');
+    log('mic closed');
     return true;
   }
 
@@ -567,19 +567,19 @@ export function installEvenHostMock(opts: MockOptions): EvenHostMock {
         const textObject = (data.textObject as TextContainerDef[] | undefined) ?? [];
         const total = Number(data.containerTotalNum ?? textObject.length);
         if (faults.createResult !== null) {
-          log(`故障注入：createStartUpPageContainer → ${faults.createResult}`);
+          log(`fault injection: createStartUpPageContainer -> ${faults.createResult}`);
           return faults.createResult;
         }
         if (pageCreated) {
           // 官方：一个页面生命周期内只能调一次，之后必须走 rebuildPageContainer
-          log('createStartUpPageContainer 被重复调用 → 1 (invalid)。真机同样会失败，请改用 rebuild。');
+          log('createStartUpPageContainer called twice -> 1 (invalid). Real hardware fails the same way; use rebuild.');
           return 1;
         }
         const bad = validatePage(textObject, total);
         if (bad !== null) return bad;
         buildScreen(textObject);
         pageCreated = true;
-        log(`createStartUpPageContainer：${textObject.length} 个文本容器 → 0 (success)`);
+        log(`createStartUpPageContainer: ${textObject.length} text containers -> 0 (success)`);
         return 0;
       }
       case 'rebuildPageContainer': {
@@ -587,30 +587,30 @@ export function installEvenHostMock(opts: MockOptions): EvenHostMock {
         const textObject = (data.textObject as TextContainerDef[] | undefined) ?? [];
         const total = Number(data.containerTotalNum ?? textObject.length);
         if (faults.rebuildOk !== null) {
-          log(`故障注入：rebuildPageContainer → ${String(faults.rebuildOk)}`);
+          log(`fault injection: rebuildPageContainer -> ${String(faults.rebuildOk)}`);
           return faults.rebuildOk;
         }
         if (!pageCreated) {
-          log('rebuildPageContainer 先于 createStartUpPageContainer 调用 → false');
+          log('rebuildPageContainer called before createStartUpPageContainer -> false');
           return false;
         }
         if (validatePage(textObject, total) !== null) return false;
         buildScreen(textObject);
-        log(`rebuildPageContainer：${textObject.length} 个文本容器 → true`);
+        log(`rebuildPageContainer: ${textObject.length} text containers -> true`);
         return true;
       }
       case 'textContainerUpgrade': {
         stats.upgradeCalls += 1;
         if (faults.upgradeOk !== null) {
           if (!faults.upgradeOk) stats.upgradeFailures += 1;
-          log(`故障注入：textContainerUpgrade → ${String(faults.upgradeOk)}`);
+          log(`fault injection: textContainerUpgrade -> ${String(faults.upgradeOk)}`);
           return faults.upgradeOk;
         }
         const id = Number(data.containerID ?? nameToId.get(String(data.containerName ?? '')));
         const entry = containers.get(id);
         if (!entry) {
           stats.upgradeFailures += 1;
-          log(`textContainerUpgrade：未知容器 ${String(data.containerID)}/${String(data.containerName)} → false`);
+          log(`textContainerUpgrade: unknown container ${String(data.containerID)}/${String(data.containerName)} -> false`);
           return false;
         }
         const content = String(data.content ?? '');
@@ -618,7 +618,7 @@ export function installEvenHostMock(opts: MockOptions): EvenHostMock {
         const bytes = utf8.encode(content).length;
         if (bytes > CONTENT_BYTES_LIMIT * 2) {
           stats.upgradeFailures += 1;
-          log(`textContainerUpgrade：内容 ${bytes} 字节超限 → false`);
+          log(`textContainerUpgrade: content ${bytes} bytes over the limit -> false`);
           return false;
         }
         entry.def = { ...entry.def, content };
@@ -630,7 +630,7 @@ export function installEvenHostMock(opts: MockOptions): EvenHostMock {
         return isOpen ? startMic() : stopMic();
       }
       case 'imuControl':
-        log(`imuControl(${JSON.stringify(data)})：mock 不产生 IMU 数据`);
+        log(`imuControl(${JSON.stringify(data)}): the mock produces no IMU data`);
         return true;
       case 'shutDownPageContainer': {
         const exitMode = Number(data.exitMode ?? 0);
@@ -650,7 +650,7 @@ export function installEvenHostMock(opts: MockOptions): EvenHostMock {
         // bridge.getDeviceInfo() 走的就是这个方法（实测），返回 DeviceInfo 的 JSON 形状
         return { model: 'g2', sn: 'MOCK-G2-0001', status: { ...deviceStatus } };
       default:
-        log(`未实现的宿主方法：${envelope.method}`);
+        log(`unimplemented host method: ${envelope.method}`);
         throw new Error(`mock: unsupported method ${envelope.method}`);
     }
   }
@@ -685,7 +685,7 @@ export function installEvenHostMock(opts: MockOptions): EvenHostMock {
       }
       // 故障注入：模拟 BLE 卡死（永不 settle）——插件必须靠自己的 5s 超时兜住
       if (faults.bridgeHang) {
-        log(`故障注入：${envelope.method} 永不返回（模拟 BLE 卡死）`);
+        log(`fault injection: ${envelope.method} never returns (simulating a BLE hang)`);
         return new Promise(() => {});
       }
       if (faults.bridgeDelayMs > 0) {
@@ -710,41 +710,41 @@ export function installEvenHostMock(opts: MockOptions): EvenHostMock {
   };
   (window as unknown as Record<string, unknown>).WebSocket = TrackedWebSocket;
 
-  log('宿主 mock 已注入（flutter_inappwebview.callHandler 就绪，字形/折行走官方 pretext）');
+  log('host mock installed (flutter_inappwebview.callHandler ready; glyphs and wrapping via official pretext)');
 
   return {
     simulateGesture(kind: GestureKind, source: GestureSource = 'glassesR') {
       const code = GESTURE_EVENT[kind];
-      log(`推送 sysEvent：${kind} / ${source}（eventType=${code === 0 ? '缺省' : code}）`);
+      log(`sysEvent: ${kind} / ${source} (eventType=${code === 0 ? 'omitted' : code})`);
       pushSysEvent(code, source);
     },
     simulateForegroundExit() {
-      log('推送 FOREGROUND_EXIT_EVENT(5)：前台交互层关闭，**页面仍挂载** —— 插件不该断 WS');
+      log('FOREGROUND_EXIT_EVENT(5): overlay closed, page still mounted -- the plugin must not drop the WS');
       pushHubEvent('sysEvent', { eventType: EVT.FOREGROUND_EXIT });
     },
     simulateForegroundEnter() {
-      log('推送 FOREGROUND_ENTER_EVENT(4)：重新回到前台');
+      log('FOREGROUND_ENTER_EVENT(4): back in the foreground');
       pushHubEvent('sysEvent', { eventType: EVT.FOREGROUND_ENTER });
     },
     simulateExit(abnormal = false) {
       const code = abnormal ? EVT.ABNORMAL_EXIT : EVT.SYSTEM_EXIT;
-      log(`推送 ${abnormal ? 'ABNORMAL' : 'SYSTEM'}_EXIT_EVENT(${code})：真正的销毁`);
+      log(`${abnormal ? 'ABNORMAL' : 'SYSTEM'}_EXIT_EVENT(${code}): a real teardown`);
       pushHubEvent('sysEvent', { eventType: code });
     },
     killSockets() {
       const n = liveSockets.size;
       for (const ws of [...liveSockets]) ws.close();
-      log(`断网模拟：关闭了 ${n} 个 WebSocket`);
+      log(`network drop: closed ${n} WebSocket(s)`);
       return n;
     },
     pushDeviceStatus(partial?: Record<string, unknown>) {
       deviceStatus = { ...deviceStatus, ...partial };
-      log(`推送眼镜 deviceStatusChanged：电量 ${String(deviceStatus.batteryLevel)}%`);
+      log(`glasses deviceStatusChanged: battery ${String(deviceStatus.batteryLevel)}%`);
       pushToSdk('deviceStatusChanged', { ...deviceStatus });
     },
     pushRingStatus(partial?: Record<string, unknown>) {
       ringStatus = { ...ringStatus, ...partial };
-      log(`推送戒指 deviceStatusChanged：电量 ${String(ringStatus.batteryLevel)}%（不该被当成眼镜遥测）`);
+      log(`ring deviceStatusChanged: battery ${String(ringStatus.batteryLevel)}% (must not count as glasses telemetry)`);
       pushToSdk('deviceStatusChanged', { ...ringStatus });
     },
     screenText() {

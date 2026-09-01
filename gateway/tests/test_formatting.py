@@ -311,20 +311,43 @@ class TestPaginator:
         p.set_text("流式内容一二三")
         assert p.page_text() == first
 
-    def test_follow_tracks_last_page_while_streaming(self) -> None:
+    def test_streaming_never_moves_the_reader(self) -> None:
+        """流式重排**不许**动读者所在的页。
+
+        这一条曾经是反的（`follow` 跟随末页）。8 行的屏幕上那等于读不完：
+        回答一超过一页，读者正读着第一页就被甩到末尾。真机复现见下一个用例。
+        """
         p = Paginator(box=BODY)
-        for prefix in stream_prefixes():
-            p.set_text(prefix)
-            assert p.follow and p.cur == p.total - 1
+        # 语料必须真的涨到多页 —— 用 stream_prefixes() 的短语料，这条断言是空的
+        # （每个前缀都只有一页，cur 恒等于 0，跟随与否都测不出来）。
+        full = "句子甲乙丙丁戊己庚辛，再写长一点凑够好几页。" * 30
+        grew = False
+        for n in range(1, len(full), 37):
+            p.set_text(full[:n])
+            assert p.cur == 0, f"流式到第 {n} 字时把读者从首页甩走了（现在 {p.cur + 1}/{p.total}）"
+            grew = grew or p.total > 1
+        assert grew, "语料没跨过页边界，这条断言测不到东西"
+
+    def test_crossing_the_page_boundary_does_not_yank_the_reader(self) -> None:
+        """回归：真机上抓到的原样 —— 最后一个 token 让正文从 1 页涨到 2 页，
+        屏幕当场跳到 `2/2`，只剩半句结尾。读者必须留在第 1 页。"""
+        p = Paginator(box=BODY)
+        p.set_text("句子甲乙丙丁戊己庚辛。" * 8)
+        assert p.total == 1 and p.cur == 0
+        p.set_text("句子甲乙丙丁戊己庚辛。" * 40)
+        assert p.total >= 2, "语料不够长，这个回归测试测不到东西"
+        assert p.cur == 0, "越过页边界时把读者甩到了末页"
+        assert p.footer().startswith("1/") or " 1/" in p.footer()
 
     def test_turning_back_pins_the_page(self) -> None:
         p = paginate("句子甲乙丙丁戊己庚辛。" * 40)
         assert p.total >= 2
+        assert p.turn(p.total) is True and p.at_last     # 先跟到最新一页
         assert p.turn(-1) is True
-        assert p.follow is False
+        assert p.at_last is False
         pinned = p.cur
         p.set_text("句子甲乙丙丁戊己庚辛。" * 60)   # 继续流式：不应把用户拽走
-        assert p.cur == pinned and p.follow is False
+        assert p.cur == pinned and p.at_last is False
 
     def test_turn_at_boundary_is_a_noop(self) -> None:
         """到边界返回 False，调用方据此不发冗余帧。"""
@@ -334,8 +357,8 @@ class TestPaginator:
     def test_cur_clamped_when_text_shrinks(self) -> None:
         """回归 F7：重排后页数变少时 cur 必须被夹紧，否则页脚会显示「4/2」。"""
         p = paginate("句子甲乙丙丁戊己庚辛。" * 60)
-        p.turn(-1)
-        assert not p.follow
+        p.turn(p.total)          # 先翻到末页，才可能出现「cur 越界」
+        assert p.cur > 0
         far = p.cur
         p.set_text("短。")
         assert p.total == 1 and p.cur == 0 and far > 0

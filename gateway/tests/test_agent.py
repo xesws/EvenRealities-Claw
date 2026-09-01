@@ -169,9 +169,22 @@ class TestModelIdAndKey:
 
 class TestRouting:
     @pytest.mark.parametrize("q", ["现在几点了", "今天几号", "今天星期几",
-                                   "明天天气怎么样", "帮我看看日期"])
+                                   "帮我看看日期", "what time is it", "what's the date"])
     def test_daily_keywords(self, q):
         assert skills.route(q).name == "daily"
+
+    @pytest.mark.parametrize("q", ["今天天气怎么样", "明天天气怎么样", "要带伞吗",
+                                   "外面冷不冷", "What's the weather like?",
+                                   "Do I need a jacket?", "will it rain today"])
+    def test_weather_keywords(self, q):
+        """「明天天气」以前落在 daily —— 两边都沾边，但它显然该走带天气工具的那一档。
+        所以 `_WEATHER` 先判。这是有意的行为改变。"""
+        assert skills.route(q).name == "weather"
+
+    def test_routing_is_language_agnostic(self):
+        """中英关键词放同一张表：用户中英混说也照样命中，路由不需要知道 locale。"""
+        assert skills.route("今天 weather 怎么样").name == "weather"
+        assert skills.route("现在 what time 了").name == "daily"
 
     @pytest.mark.parametrize("q", ["什么是光的折射", "帮我想个标题", ""])
     def test_everything_else_falls_back_to_toolless_ask(self, q):

@@ -2,6 +2,7 @@
  * 装配层。启动顺序：UI 先行 → bridge 等待（3s 超时提示"未在 Even App 内"但 UI 仍可用）
  * → 容器创建 → WS 连接 → hello_ok 的 resume 帧直接渲染。
  */
+import { t } from './strings';
 import type { DeviceStatus } from '@evenrealities/even_hub_sdk';
 import { connectBridge, GlassesController, type InputGesture } from './glasses';
 import { HUD_TEXT } from './hud';
@@ -27,12 +28,12 @@ function deviceName(): string {
 }
 
 const CONN_TEXT: Record<ConnState, [string, 'online' | 'bad' | 'plain']> = {
-  idle: ['未连接', 'plain'],
-  connecting: ['连接中…', 'plain'],
-  authing: ['认证中…', 'plain'],
-  online: ['已连接', 'online'],
-  reconnecting: ['重连中…', 'bad'],
-  unpaired: ['未配对', 'bad'],
+  idle: [t.connIdle, 'plain'],
+  connecting: [t.connConnecting, 'plain'],
+  authing: [t.connAuthing, 'plain'],
+  online: [t.connOnline, 'online'],
+  reconnecting: [t.connReconnecting, 'bad'],
+  unpaired: [t.connUnpaired, 'bad'],
 };
 
 const ui = new LensUi({
@@ -52,7 +53,7 @@ const ui = new LensUi({
       if (!ok) {
         pttActive = false;
         ui.setPttActive(false);
-        ui.toast('麦克风没能打开，请重试');
+        ui.toast(t.micFailed);
         return;
       }
       client.sendPttStart();
@@ -82,7 +83,7 @@ const ui = new LensUi({
     client.disconnect();
     client.configure({ url });
     client.connect();
-    ui.toast('已保存网关地址，正在重连');
+    ui.toast(t.savedReconnecting);
   },
   onRepair() {
     client.disconnect();
@@ -105,7 +106,7 @@ const client = new LensClient({
   onPaired({ deviceId, refreshToken }) {
     void store.save({ gatewayUrl, deviceId, refreshToken });
     ui.showMainScreen(gatewayUrl);
-    ui.toast('配对成功');
+    ui.toast(t.pairOk);
   },
   onPairFailed(message) {
     ui.showPairScreen(gatewayUrl || defaultGatewayUrl());
@@ -114,7 +115,7 @@ const client = new LensClient({
   onAuthLost() {
     void store.clearAuth();
     ui.showPairScreen(gatewayUrl || defaultGatewayUrl());
-    ui.showPairError('设备认证失效，请重新配对');
+    ui.showPairError(t.pairExpired);
   },
   onConnectionLost() {
     // 本地看门狗：眼镜与手机预览同时盖掉旧帧，消灭"旧帧撒谎"
@@ -123,8 +124,8 @@ const client = new LensClient({
     ui.setStatusLine(WATCHDOG_STATUS);
   },
   onServerError(code, message) {
-    if (code === 'busy') ui.toast(message ?? '上一条还在处理，说"打断"或稍等');
-    else ui.toast(message ?? `服务器错误（${code}）`);
+    if (code === 'busy') ui.toast(message ?? t.busy);
+    else ui.toast(message ?? t.serverError(code));
   },
   async onCmd(cmd) {
     // 协议 v1.1：目前只有 telemetry 一条。不认识的命令**抛错**，
@@ -179,25 +180,25 @@ function handleGesture(g: InputGesture): void {
 }
 
 function formatGlassesStatus(status: DeviceStatus): string {
-  if (!status.isConnected()) return '眼镜：未连接';
-  const parts = ['眼镜：已连接'];
-  if (typeof status.batteryLevel === 'number') parts.push(`电量 ${status.batteryLevel}%`);
-  if (status.isCharging) parts.push('充电中');
-  parts.push(status.isWearing ? '佩戴中' : '未佩戴');
+  if (!status.isConnected()) return t.glassesOffline;
+  const parts: string[] = [t.glassesOnline];   // 标注：文案表是 as const，否则数组会被推成字面量联合
+  if (typeof status.batteryLevel === 'number') parts.push(t.battery(status.batteryLevel));
+  if (status.isCharging) parts.push(t.charging);
+  parts.push(status.isWearing ? t.worn : t.notWorn);
   return parts.join(' · ');
 }
 
 async function bootstrap(): Promise<void> {
   // 1) UI 先行
   ui.mount();
-  ui.setConn('初始化…');
-  ui.setGlassesStatus('眼镜：检测中…');
+  ui.setConn(t.connInit);
+  ui.setGlassesStatus(t.glassesChecking);
 
   // 2) bridge 等待（3s 超时）
   const bridge = await connectBridge(3000);
   if (!bridge) {
-    ui.setBridgeNotice('未在 Even App 内运行：眼镜画面不可用，手机端功能不受影响。');
-    ui.setGlassesStatus('眼镜：不可用（无宿主）');
+    ui.setBridgeNotice(t.noHostNotice);
+    ui.setGlassesStatus(t.glassesNoHost);
   } else {
     store.setBridge(bridge);
     glasses = new GlassesController(bridge, {
@@ -231,7 +232,7 @@ async function bootstrap(): Promise<void> {
     // 3) 容器创建；失败（非 0）时手机页显示错误
     const result = await glasses.createContainers();
     if (result !== 0) {
-      ui.setBridgeNotice(`眼镜画面初始化失败（错误码 ${result}），请重启插件重试。`);
+      ui.setBridgeNotice(t.hudInitFailed(result));
     }
   }
 

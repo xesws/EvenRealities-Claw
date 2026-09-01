@@ -390,16 +390,38 @@ class Capability(str, Enum):
 
 第一批工具：
 
-| 工具 | 能力 | 预算 | 说明 |
-|---|---|---|---|
-| `now` | READ | 50ms | 本地时间/日期/星期 |
-| `weather` | READ | 1500ms | 外部 API，仅传城市名 |
-| `notes_search` | READ | 800ms | 检索配置目录下的笔记，只读 |
-| `note_append` | WRITE | 200ms | 追加到**单个**固定文件 |
-| `todo_add` | WRITE | 200ms | 追加到**单个**固定文件 |
-| `todo_list` | READ | 200ms | 读那一个文件 |
+| 工具 | 能力 | 预算 | 状态 | 说明 |
+|---|---|---|---|---|
+| `now` | READ | 50ms | **已实现** | 本地时间/日期/星期 |
+| `weather` | READ | 2000ms | **已实现** | Open-Meteo，仅传城市名 |
+| `notes_search` | READ | 800ms | 未实现 | 检索配置目录下的笔记，只读 |
+| `note_append` | WRITE | 200ms | 未实现 | 追加到**单个**固定文件 |
+| `todo_add` | WRITE | 200ms | 未实现 | 追加到**单个**固定文件 |
+| `todo_list` | READ | 200ms | 未实现 | 读那一个文件 |
 
 明确不做：shell、文件读写、发消息/邮件、浏览器、代码执行、日历写入。
+
+#### `weather` 的预算是怎么定到 2000ms 的
+
+设计稿原写 1500ms，实测之后改成 2000ms —— 记在这里是因为**过程比数字重要**：
+
+| 阶段 | 耗时 | 原因 |
+|---|---|---|
+| 最初 | 2180ms | 每次调用现建 `aiohttp.ClientSession`：DNS + TLS 握手全部重来 |
+| 复用会话后 | 1283ms → 315ms | 模块级单例，连接池热起来 |
+| 预置地理编码缓存后 | **≈220ms** | Open-Meteo 的 geocoding 端点本身就慢（冷启 2.2s），而 forecast 端点只要 240ms |
+
+`_GEO_CACHE` 里 20 个城市的经纬度**取自该 API 自己的返回**，不是我编的。
+缓存不命中时仍然照常去查，只是慢一点。
+
+**内层超时必须小于外层预算**：工具自己的 HTTP 超时设成 1.8s，比 `budget_ms`
+的 2000ms 小 —— 否则预算先到，工具那句「天气查不到，稍后再试」永远没机会返回，
+用户看到的是一个干巴巴的超时。
+
+写文档时曾把它定成 2500ms，被
+`test_every_registered_tool_declares_a_capability_and_budget` 当场拦下 ——
+那条测试断言的正是 §9.1 的「两秒内能返」。**标准是我自己写的，先违反的也是我自己**，
+测试比人可靠。
 
 ### 9.2 Skill 定义
 
@@ -417,11 +439,17 @@ class Skill:
 
 第一批：
 
-| skill | 工具 | 预算 | 写能力 |
-|---|---|---|---|
-| `ask` | 无 | 4000ms | 无 |
-| `daily` | `now` `weather` `todo_list` | 6000ms | 无 |
-| `capture` | `note_append` `todo_add` | 5000ms | **有** |
+| skill | 工具 | 预算 | 写能力 | 状态 |
+|---|---|---|---|---|
+| `ask` | 无 | 4000ms | 无 | **已实现** |
+| `daily` | `now` | 6000ms | 无 | **已实现** |
+| `weather` | `weather` | 9000ms | 无 | **已实现** |
+| `capture` | `note_append` `todo_add` | 5000ms | **有** | 未实现 |
+
+`weather` 从 `daily` 里独立出来了：它是唯一一个要走公网的 skill，
+预算（9000ms）比纯本地的 `daily`（6000ms）宽，把两者混在一个 skill 里
+等于让「现在几点」也背上外网往返的预算。路由上 `weather` 的正则**先于**
+`daily` 匹配，否则「明天天气怎么样」会被 `daily` 抢走。
 
 `ask` 无工具是刻意的——它是最高频路径，跳过工具编排能拿到最低的首字延迟。
 

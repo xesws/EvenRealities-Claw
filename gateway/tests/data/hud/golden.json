@@ -114,14 +114,14 @@
       "state": "S7",
       "containers": {
         "status": "工 √ 完成",
-        "body": "…Capture 置为 1，否则整页建立会失\n败。建页只能调用一次 createStartUpPageContainer，之后所有改\n动都要走 rebuildPageContainer。麦克风是四麦阵列，单路 16kHz \nPCM；触控在两侧镜腿都有，还可以外接 R1 戒指。",
-        "foot": "‹ 2/2"
+        "body": "G2 的可寻址画布是每只眼 576×288 像素，左上角为原点，X 向\n右、Y 向下。行高固定 27px，所以正文区 216px 正好八行。字体\n是非等宽的 LVGL 字体，没有字号控制，也不能右对齐，所谓居中\n只是拿空格去凑。文本亮度只有 0 到 4 五级，和边框的 0 到 15 \n是两套完全不同的刻度。字库外的字符不会显示豆腐块，而是直\n接什么都不画，所以生僻符号和 emoji 一律要避开。每页最多十二\n个容器，其中文本容器不超过八个，图片容器不超过四个，并且\n必须恰好有一个容器把 isEventCapture 置为 1，否则整页建立会失",
+        "foot": "1/2 ›"
       },
       "meta": {
         "rec": false,
         "agent": "工部",
         "page": {
-          "cur": 2,
+          "cur": 1,
           "total": 2
         }
       }
@@ -444,6 +444,24 @@
       "state": "S7",
       "containers": {
         "status": "工 √ 完成",
+        "body": "G2 的可寻址画布是每只眼 576×288 像素，左上角为原点，X 向\n右、Y 向下。行高固定 27px，所以正文区 216px 正好八行。字体\n是非等宽的 LVGL 字体，没有字号控制，也不能右对齐，所谓居中\n只是拿空格去凑。文本亮度只有 0 到 4 五级，和边框的 0 到 15 \n是两套完全不同的刻度。字库外的字符不会显示豆腐块，而是直\n接什么都不画，所以生僻符号和 emoji 一律要避开。每页最多十二\n个容器，其中文本容器不超过八个，图片容器不超过四个，并且\n必须恰好有一个容器把 isEventCapture 置为 1，否则整页建立会失",
+        "foot": "1/2 ›"
+      },
+      "meta": {
+        "rec": false,
+        "agent": "工部",
+        "page": {
+          "cur": 1,
+          "total": 2
+        }
+      }
+    },
+    {
+      "type": "frame",
+      "seq": 9,
+      "state": "S7",
+      "containers": {
+        "status": "工 √ 完成",
         "body": "…Capture 置为 1，否则整页建立会失\n败。建页只能调用一次 createStartUpPageContainer，之后所有改\n动都要走 rebuildPageContainer。麦克风是四麦阵列，单路 16kHz \nPCM；触控在两侧镜腿都有，还可以外接 R1 戒指。",
         "foot": "‹ 2/2"
       },
@@ -458,7 +476,7 @@
     },
     {
       "type": "frame",
-      "seq": 9,
+      "seq": 10,
       "state": "S7",
       "containers": {
         "status": "工 √ 完成",
@@ -476,7 +494,7 @@
     },
     {
       "type": "frame",
-      "seq": 10,
+      "seq": 11,
       "state": "S7",
       "containers": {
         "status": "工 √ 完成",
@@ -1218,14 +1236,14 @@
       "state": "S7",
       "containers": {
         "status": "工 √ 完成",
-        "body": "详见 官方文档。",
-        "foot": "‹ 2/2"
+        "body": "安装步骤\n\n先跑 npm install，再执行 build。\n\nnpm run build\n• 第一步：装依赖\n• 第二步：打包\n",
+        "foot": "1/2 ›"
       },
       "meta": {
         "rec": false,
         "agent": "工部",
         "page": {
-          "cur": 2,
+          "cur": 1,
           "total": 2
         }
       }
@@ -1236,14 +1254,14 @@
       "state": "S7",
       "containers": {
         "status": "工 √ 完成",
-        "body": "安装步骤\n\n先跑 npm install，再执行 build。\n\nnpm run build\n• 第一步：装依赖\n• 第二步：打包\n",
-        "foot": "1/2 ›"
+        "body": "详见 官方文档。",
+        "foot": "‹ 2/2"
       },
       "meta": {
         "rec": false,
         "agent": "工部",
         "page": {
-          "cur": 1,
+          "cur": 2,
           "total": 2
         }
       }

@@ -193,16 +193,17 @@ class TestWrites:
         lid = await lease(env)
         await env["client"].post(f'/control/{env["id"]}/render',
                                  json={"lease_id": lid, "text": LONG}, headers=AUTH)
-        back = await (await env["client"].post(f'/control/{env["id"]}/page',
-                                               json={"dir": "prev", "lease_id": lid},
-                                               headers=AUTH)).json()
-        assert back["turned"] is True
+        # 写屏后停在首页，所以先往后翻、再翻回来，最后撞前边界
         fwd = await (await env["client"].post(f'/control/{env["id"]}/page',
                                               json={"dir": "next", "lease_id": lid},
                                               headers=AUTH)).json()
         assert fwd["turned"] is True
+        back = await (await env["client"].post(f'/control/{env["id"]}/page',
+                                               json={"dir": "prev", "lease_id": lid},
+                                               headers=AUTH)).json()
+        assert back["turned"] is True
         edge = await (await env["client"].post(f'/control/{env["id"]}/page',
-                                               json={"dir": "next", "lease_id": lid},
+                                               json={"dir": "prev", "lease_id": lid},
                                                headers=AUTH)).json()
         assert edge["turned"] is False and "边界" in edge["note"]
 

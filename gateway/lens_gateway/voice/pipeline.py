@@ -246,10 +246,10 @@ class VoicePipeline:
         hud = self.hud
         hud.cancel_timer()
         p = hud.paginator
-        p.set_text(full_text)   # 内部已按 follow 跟到末页并夹紧 cur（修 F7）
+        p.set_text(full_text)   # 重排不移动读者，只夹紧 cur（修 F7）
         if not final:
-            # 用户往回翻过 → 页脚带暂停标记，提示「新内容还在来，但画面钉住了」
-            suffix = "" if p.follow else hud.glyphs["paused"]
+            # 读者没跟在最新一页上 → 页脚带标记，提示「新内容还在来，但画面钉住了」
+            suffix = "" if p.at_last else hud.glyphs["paused"]
             hud.emit("S6", hud.status_line("S6"), p.page_text(), p.footer(suffix))
         else:
             hud.emit("S7", hud.status_line("S7"), p.page_text(), p.footer(), urgent=True)

@@ -32,7 +32,7 @@ const mock = installEvenHostMock({
   screen: $('glassesScreen'),
   onLog: log,
   onMicState: (open) => {
-    micStateEl.textContent = open ? '打开（16kHz s16le → audioEvent）' : '关闭';
+    micStateEl.textContent = open ? 'on (16kHz s16le -> audioEvent)' : 'off';
   },
 });
 
@@ -64,7 +64,7 @@ function bindCheck(id: string, apply: (on: boolean) => void): void {
   const el = $(id) as HTMLInputElement;
   el.addEventListener('change', () => {
     apply(el.checked);
-    log(`故障开关 ${id} → ${el.checked ? '开' : '关'}`);
+    log(`fault switch ${id} -> ${el.checked ? 'on' : 'off'}`);
   });
 }
 bindCheck('fxUpgradeFail', (on) => (mock.faults.upgradeOk = on ? false : null));
@@ -72,20 +72,20 @@ bindCheck('fxMicDenied', (on) => (mock.faults.micDenied = on));
 bindCheck('fxHang', (on) => (mock.faults.bridgeHang = on));
 $('fxDelay').addEventListener('change', (ev) => {
   mock.faults.bridgeDelayMs = Number((ev.target as HTMLInputElement).value) || 0;
-  log(`模拟 BLE 往返延迟 → ${mock.faults.bridgeDelayMs}ms`);
+  log(`simulated BLE round-trip delay -> ${mock.faults.bridgeDelayMs}ms`);
 });
 $('btnStats').addEventListener('click', () => {
-  log(`统计：${JSON.stringify(mock.stats)}`);
-  log(`屏上实际文本：${JSON.stringify(mock.screenText())}`);
+  log(`stats: ${JSON.stringify(mock.stats)}`);
+  log(`actual on-screen text: ${JSON.stringify(mock.screenText())}`);
 });
 
 // 5) 加载插件主模块（与 index.html 完全相同的代码路径）
 void import('../src/main')
   .then(() => {
-    log('插件 bundle 已加载');
+    log('plugin bundle loaded');
     // 给插件留出订阅 onDeviceStatusChanged 的时间再推初始设备状态
     window.setTimeout(() => mock.pushDeviceStatus(), 1200);
   })
   .catch((err: unknown) => {
-    log(`插件加载失败：${err instanceof Error ? err.message : String(err)}`);
+    log(`plugin failed to load: ${err instanceof Error ? err.message : String(err)}`);
   });

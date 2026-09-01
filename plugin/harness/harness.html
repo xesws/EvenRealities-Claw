@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>OpenClaw Lens · 浏览器模拟器</title>
+    <title>OpenClaw Lens · Browser Simulator</title>
     <style>
       :root {
         --bg: #0b0f0d;
@@ -32,7 +32,7 @@
       h2 { margin: 0; font-size: 15px; color: var(--dim); font-weight: 600; }
       h2 b { color: var(--green); }
 
-      /* 576×288 眼镜屏，等比放大 1.5x 显示 */
+      /* the 576x288 display, scaled 1.5x for readability */
       .glasses-shell {
         width: 864px;
         height: 432px;
@@ -91,7 +91,7 @@
       }
       .log .t { color: #4d6457; }
 
-      /* 手机框：插件 UI 原样跑在里面 */
+      /* phone frame: the real plugin UI runs inside */
       .phone-frame {
         width: 400px;
         min-height: 720px;
@@ -109,45 +109,45 @@
   <body>
     <div class="harness">
       <div class="left">
-        <h2><b>OpenClaw Lens</b> 浏览器模拟器 —— 完整插件 + 假眼镜，连真网关即可全链路验证</h2>
+        <h2><b>OpenClaw Lens</b> browser simulator &mdash; the real plugin plus a stand-in display; point it at a real gateway to exercise the whole chain</h2>
         <div class="glasses-shell">
           <div id="glassesScreen" class="glasses-screen"></div>
         </div>
         <div class="controls">
           <select id="gestureKind">
-            <option value="tap">单击（CLICK，eventType 缺省）</option>
-            <option value="doubleTap">双击（DOUBLE_CLICK=3）</option>
-            <option value="swipeUp">上滑（SCROLL_TOP=1）</option>
-            <option value="swipeDown">下滑（SCROLL_BOTTOM=2）</option>
-            <option value="longPress">长按（LONG_PRESS=9）</option>
-            <option value="longPressRelease">长按松开（=10）</option>
+            <option value="tap">Tap (CLICK, eventType omitted)</option>
+            <option value="doubleTap">Double tap (DOUBLE_CLICK=3)</option>
+            <option value="swipeUp">Swipe up (SCROLL_TOP=1)</option>
+            <option value="swipeDown">Swipe down (SCROLL_BOTTOM=2)</option>
+            <option value="longPress">Long press (LONG_PRESS=9)</option>
+            <option value="longPressRelease">Long press release (=10)</option>
           </select>
           <select id="gestureSource">
-            <option value="glassesR">右镜腿（1）</option>
-            <option value="glassesL">左镜腿（3）</option>
-            <option value="ring">R1 戒指（2）</option>
-            <option value="unknown">来源缺省（0，字段省略）</option>
+            <option value="glassesR">Right temple (1)</option>
+            <option value="glassesL">Left temple (3)</option>
+            <option value="ring">R1 ring (2)</option>
+            <option value="unknown">Source omitted (0)</option>
           </select>
-          <button id="btnGesture">发送手势</button>
+          <button id="btnGesture">Send gesture</button>
         </div>
         <div class="controls">
-          <button id="btnFgEnter">前台进入(4)</button>
-          <button id="btnFgExit">前台退出(5) · 不该断 WS</button>
-          <button id="btnExit">系统退出(7)</button>
-          <button id="btnAbnormal">异常退出(6)</button>
-          <button id="btnDrop">断网（关 WS）</button>
-          <button id="btnBattery">推低电量 12%</button>
-          <button id="btnUnworn">推未佩戴</button>
-          <button id="btnRing">推 R1 戒指状态(41%) · 不该当成眼镜</button>
-          <button id="btnStats">打印统计/屏上文本</button>
+          <button id="btnFgEnter">Foreground enter (4)</button>
+          <button id="btnFgExit">Foreground exit (5) · must not drop WS</button>
+          <button id="btnExit">System exit (7)</button>
+          <button id="btnAbnormal">Abnormal exit (6)</button>
+          <button id="btnDrop">Drop WS</button>
+          <button id="btnBattery">Push battery 12%</button>
+          <button id="btnUnworn">Push not-worn</button>
+          <button id="btnRing">Push R1 ring (41%) · must not count as glasses</button>
+          <button id="btnStats">Dump stats / on-screen text</button>
         </div>
         <div class="controls fx">
-          <span class="mic">故障注入：</span>
-          <label><input type="checkbox" id="fxUpgradeFail" />textContainerUpgrade 恒失败</label>
-          <label><input type="checkbox" id="fxMicDenied" />麦克风被抢占</label>
-          <label><input type="checkbox" id="fxHang" />bridge 卡死（测 5s 超时）</label>
-          <label>BLE 延迟 <input type="number" id="fxDelay" value="0" min="0" step="50" style="width:70px" /> ms</label>
-          <span class="mic">麦克风：<em id="micState">关闭</em></span>
+          <span class="mic">Fault injection:</span>
+          <label><input type="checkbox" id="fxUpgradeFail" />textContainerUpgrade always fails</label>
+          <label><input type="checkbox" id="fxMicDenied" />Microphone taken by another app</label>
+          <label><input type="checkbox" id="fxHang" />bridge hangs (exercise the 5s timeout)</label>
+          <label>BLE delay <input type="number" id="fxDelay" value="0" min="0" step="50" style="width:70px" /> ms</label>
+          <span class="mic">Mic: <em id="micState">off</em></span>
         </div>
         <div id="mockLog" class="log"></div>
       </div>

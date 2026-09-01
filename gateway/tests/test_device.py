@@ -194,10 +194,10 @@ class TestPaging:
     def _load(self, hud: HudDevice, state: str = "S6", *, to_first: bool = True) -> None:
         """灌入多页正文。
 
-        注意 `set_text` 的语义是「跟随最新」——流式写作时页面自动停在末页，
-        所以想测「往后翻」必须先回到首页（这一步本身也把 `follow` 置为 False）。
+        `set_text` 不移动读者，装载后自然停在首页，所以 `to_first` 只是把
+        每次装载的起点显式钉死，跟测别的行为的用例互不干扰。
         """
-        hud.paginator.reset()          # 回到「跟随最新」，让每次装载的起点一致
+        hud.paginator.reset()          # 清空，让每次装载的起点一致
         hud.paginator.set_text(LONG_TEXT)
         if to_first:
             hud.paginator.turn(-hud.paginator.total)
@@ -226,7 +226,7 @@ class TestPaging:
         hud.page(-1, source="glasses")
         assert hud.seq == seq_before, "到边界不能发帧"
 
-        self._load(hud, to_first=False)                    # set_text 跟随到末页
+        hud.page(hud.paginator.total, source="glasses")    # 一路翻到末页
         assert hud.paginator.at_last
         assert hud.page(1, source="glasses") is False, "末页再往后同理"
 
@@ -305,8 +305,8 @@ class TestLease:
         assert hud.paginator.total > 1, "外部文本必须走同一个分页器"
         assert "检索结果" in hud.current_frame["containers"]["status"]
         # 翻页对外部渲染同样有效，且不会把状态条换成本地文案
-        # （set_text 跟随到末页，所以这里往回翻）
-        assert hud.page(-1, source="mcp") is True
+        # （set_text 停在首页，所以这里往后翻）
+        assert hud.page(1, source="mcp") is True
         assert "检索结果" in hud.current_frame["containers"]["status"]
         assert hud.lease_info() is not None, "外部翻页不应抢占自己的租约"
 

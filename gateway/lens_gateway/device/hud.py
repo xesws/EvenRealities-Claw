@@ -39,17 +39,38 @@ SendFunc = Callable[[dict], Awaitable[None]]
 
 #: HUD 状态 → (语义字形名, 中文词)。字形本身由 GlyphSet 决定 ——
 #: 真机字库外的字形已经在 `formatting.glyphs` 的 import 期校验中被挡掉了。
-STATE_LABEL: dict[str, tuple[str, str]] = {
-    "S0": ("idle", ""),
-    "S2": ("listening", "聆听"),
-    "S3": ("transcribing", "转写中"),
-    "S4": ("thinking", "思考"),
-    "S5": ("tool", "工具"),
-    "S6": ("answering", "回答"),
-    "S7": ("done", "完成"),
-    "S8": ("error", "出错"),
-    "S9": ("tool", ""),      # 外部（MCP）渲染，标题由持有者给
+#: 状态 → (字形语义名, 屏上的词)。**两套词，一套字形。**
+#:
+#: 字形不随语言变（`◆` 在哪种语言里都是 `◆`），词要变。分开放是因为字形还要
+#: 过 G2 字库自校验，而词只是词。英文词全部 ≤10 字符：状态条右边还要放计时、
+#: 页码这些东西，而这块屏一行只有 576px。
+STATE_LABELS: dict[str, dict[str, tuple[str, str]]] = {
+    "zh": {
+        "S0": ("idle", ""),
+        "S2": ("listening", "聆听"),
+        "S3": ("transcribing", "转写中"),
+        "S4": ("thinking", "思考"),
+        "S5": ("tool", "工具"),
+        "S6": ("answering", "回答"),
+        "S7": ("done", "完成"),
+        "S8": ("error", "出错"),
+        "S9": ("tool", ""),      # 外部（MCP）渲染，标题由持有者给
+    },
+    "en": {
+        "S0": ("idle", ""),
+        "S2": ("listening", "Listening"),
+        "S3": ("transcribing", "Heard"),
+        "S4": ("thinking", "Thinking"),
+        "S5": ("tool", "Tool"),
+        "S6": ("answering", "Answer"),
+        "S7": ("done", "Done"),
+        "S8": ("error", "Error"),
+        "S9": ("tool", ""),
+    },
 }
+
+#: 兼容：外部（含测试）曾直接 import 这张表。默认语言的那一份。
+STATE_LABEL: dict[str, tuple[str, str]] = STATE_LABELS["zh"]
 
 #: 外部渲染态。协议对未知 state 的要求是"原样显示"，所以加它是**加法安全**的。
 EXTERNAL_STATE = "S9"
@@ -148,6 +169,8 @@ class HudDevice:
             self.layout = replace(self.layout, body=replace(body, safety_px=cfg.composer.body_safety_px))
         self.glyphs = glyph_set(cfg.composer.glyph_profile, cfg.composer.glyph_overrides or None)
         self.badge = cfg.agent_label            # 修 S3：这个配置项以前从未被读取
+        #: 屏上文字的语言。字形表不随它变（字形另有 `glyph_profile`）。
+        self.labels = STATE_LABELS[cfg.composer.locale]
         #: W6：接的是测试替身时，状态条徽记会被替换成醒目标记（见 note_agent）。
         #: `_agent_probe` 一旦绑定就**每帧现算**，`_agent_production` 退化成它的兜底值。
         self._agent_production = True
@@ -202,7 +225,7 @@ class HudDevice:
         修 S2：以前翻页时状态条被就地重写成 ``f"{badge} {glyph}"``，把「回答」「完成」
         这些词丢掉了 —— 同一个状态在首次渲染和翻页后长得不一样。现在只有这一个入口。
         """
-        name, default_word = STATE_LABEL[state]
+        name, default_word = self.labels[state]
         badge = self.badge if self.agent_production else f"{self.badge}?"
         parts = [badge, glyph if glyph is not None else self.glyphs[name]]
         w = default_word if word is None else word
@@ -379,7 +402,7 @@ class HudDevice:
         if not p.turn(delta):
             return False
         log.debug("page(%+d) by %s → %d/%d", delta, source, p.cur + 1, p.total)
-        suffix = "" if (self.state != "S6" or p.follow) else self.glyphs["paused"]
+        suffix = "" if (self.state != "S6" or p.at_last) else self.glyphs["paused"]
         external = self.state == EXTERNAL_STATE
         if self.state == "S7":
             self.start_timer(lambda: self.idle_after(self.cfg.composer.reading_idle_seconds))
