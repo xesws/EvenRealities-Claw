@@ -148,8 +148,11 @@
 
   footer{border-top:1px solid var(--line);padding:32px 0 56px;color:var(--dim2);font-size:13px}
   .note{color:var(--dim2);font-size:12.5px;margin-top:12px}
-  .gap{margin-top:10px;padding:8px 11px;border:1px dashed var(--line2);border-radius:8px;
-       color:var(--dim);font:500 12px/1.5 var(--mono);background:var(--panel)}
+  /* 只有会用到它的那一幕（提醒）才占位；占了位就不再让下面的内容跳一下。 */
+  .gap{display:none;margin-top:10px;padding:8px 11px;border:1px dashed var(--line2);
+       border-radius:8px;color:var(--dim);font:500 12px/1.5 var(--mono);background:var(--panel)}
+  .gap.reserve{display:block;visibility:hidden}
+  .gap.reserve.on{visibility:visible}
   .gap b{color:var(--fg);font-weight:600}
 </style>
 </head>
@@ -205,7 +208,7 @@
       <div class="track">
         <div class="rail" id="rail"><div class="head" id="head" style="left:0"></div></div>
       </div>
-      <div class="gap" id="gap" hidden></div>
+      <div class="gap" id="gap">&nbsp;</div>
       <p class="note" id="blurb"></p>
     </div>
 
@@ -365,12 +368,12 @@ function showGap(f, i) {
   const frames = scenes[cur].frames;
   const next = frames[i + 1];
   const box = $('#gap');
-  if (!playing || !next) { box.hidden = true; return; }
+  if (!playing || !next) { box.classList.remove('on'); return; }
   // 数到的不是"下一帧"，而是**在等的那件事**：这一幕后面还有 S9 就一路数到它。
   // 中间那帧 S0（答案挂够时间后屏幕自己清掉）不该把倒计时打断成两段。
   // 只在**真的没事发生**的时候才提示：紧邻的下一帧还远（>4s），或者下一帧就是
   // 那条自己回来的提醒。轮次进行中的 1~2 秒间隔是正常节奏，不该报"在等"。
-  if (next.t - f.t < 4 && next.state !== 'S9') { box.hidden = true; return; }
+  if (next.t - f.t < 4 && next.state !== 'S9') { box.classList.remove('on'); return; }
   const target = frames.slice(i + 1).find((x) => x.state === 'S9') || next;
   const gap = target.t - f.t;
   const done = frames.find((x) => x.state === 'S7' || x.state === 'S8');
@@ -382,8 +385,8 @@ function showGap(f, i) {
   const tick = () => {
     const left = Math.max(0, (until - performance.now()) / 1000) * speed;
     box.innerHTML = `waiting <b>${left.toFixed(0)} s</b> for ${what}`;
-    box.hidden = false;
-    if (left <= 0.05) { clearInterval(gapTimer); box.hidden = true; }
+    box.classList.add('on');
+    if (left <= 0.05) { clearInterval(gapTimer); box.classList.remove('on'); }
   };
   tick();
   gapTimer = setInterval(tick, 150);
@@ -414,6 +417,9 @@ function loadScene(i) {
   $('#kFrames').textContent = s.frames.length;
   $('#kTranscript').textContent = s.transcript || '—';
   $('#blurb').textContent = s.blurb || '';
+  // 只给真会等的那一幕留位；别的场景不该白占一行。
+  $('#gap').classList.toggle('reserve',
+    s.frames.some((f, k) => s.frames[k + 1] && s.frames[k + 1].t - f.t >= 4));
   drawRail(s.frames);
   replay.seek(0);
   stop();
@@ -421,7 +427,7 @@ function loadScene(i) {
 
 function stop() {
   playing = false; replay.stop(); clearInterval(gapTimer);
-  $('#gap').hidden = true; $('#play').textContent = '▶ Play';
+  $('#gap').classList.remove('on'); $('#play').textContent = '▶ Play';
 }
 function play() {
   playing = true; $('#play').textContent = '❚❚ Pause';
