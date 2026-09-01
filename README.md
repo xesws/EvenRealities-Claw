@@ -247,8 +247,8 @@ docs/       design, hardware spec, glyph table, agent layer, MCP surface
 
 | Suite | Result | What it covers |
 |---|---|---|
-| `pytest` | **590 passed** | Layout invariants, HUD state machine, lease semantics, auth, telemetry, agent gates, reminders |
-| `vitest` | **82 passed** | Plugin bridge, PCM payload shapes, WS protocol, harness fault injection |
+| `pytest` | **596 passed** | Layout invariants, HUD state machine, lease semantics, auth, telemetry, agent gates, reminders |
+| `vitest` | **101 passed** | Plugin bridge, PCM payload shapes, WS protocol, push-to-talk state machine, harness fault injection |
 | `tsc --noEmit` | clean | |
 | `e2e_sim.py` | **32/32** | Full voice chain against the simulator, self-contained |
 | `e2e_mcp.py` | **27/27** | Four real processes: MCP client → `lens_mcp` → control plane → gateway → device |

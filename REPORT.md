@@ -46,7 +46,7 @@
 1. [系统形态与仓库地图](#1-系统形态与仓库地图)
 2. [各组件详细说明](#2-各组件详细说明)
 3. [一次问答的完整数据流（含实测耗时）](#3-一次问答的完整数据流)
-4. [验证结果汇总（pytest 590 + vitest 82 + 语音 e2e 32 + MCP e2e 27 + 真 agent e2e 23）](#4-验证结果汇总)
+4. [验证结果汇总（pytest 596 + vitest 101 + 语音 e2e 32 + MCP e2e 27 + 真 agent e2e 23）](#4-验证结果汇总)
 5. [【最重要】拿到眼镜后的完整上手流程](#5-拿到眼镜后的完整上手流程)
 6. [运维手册：服务、配置、日志、更新、**MCP 接入**](#6-运维手册)
 7. [排障速查表](#7-排障速查表)
@@ -351,7 +351,8 @@ version / model / endpoint / production）。`demo/fake_openclaw.py` 会**自报
 | **HUD 帧序列 golden**（`tests/test_hud_golden.py`） | 13 个场景 68 帧快照 + 每帧硬性不变量：**所有字形都在 G2 字库内**、行宽不超容器、行数不超 `floor(h/27)`、无裸 markdown、seq 单调、页脚与 `meta.page` 同源、W6 徽记全程一致 | **25/25** |
 | **插件 WS 协议冒烟（存根网关）** | 配对→resume→翻页→PTT 上行→PCM 合并→心跳看门狗→退避重连→自动 refresh→旧 seq 丢弃→未知消息容忍。打桩只到传输层，被测的是真的 `LensClient`；**5 个变异测试确认这套断言会咬** | **28/28** |
 | **插件 PCM 载荷契约** | 实测钉住 SDK 对 `number[]` / base64 / `Uint8Array` 三种载荷 × 三种信封的归一行为；解不出来的形状不崩、不把坏数据交给上行、并留下可排障的日志 | **10/10** |
-| **按住说话状态机**（`tests/ptt.test.ts`） | 手机按钮与镜腿长按共用一个状态机：先开麦确认成功才发 `ptt start`（B2/B3 回归）、开麦失败不发 start、**松手事件丢了由看门狗兜底关麦**、看门狗默认 30s 刻意晚于网关 25s 软上限、stop/cancel 两条路都清定时器、两条入口混用不双开双关；另有 7 条**接线**用例把 `LONG_PRESS(9)`/`LONG_PRESS_RELEASE(10)` 从宿主 SDK 事件一路走到 UI，并回归四条既有收尾路径。**5 个变异（掏空看门狗 / 调回 start 顺序 / 去掉防双开 / 不清定时器 / 长按不接线）逐个打红** | **17/17** |
+| **按住说话状态机**（`tests/ptt.test.ts`） | 手机按钮与镜腿长按共用一个状态机：先开麦确认成功才发 `ptt start`（B2/B3 回归）、开麦失败不发 start、**松手事件丢了由看门狗兜底关麦**、看门狗默认 30s 刻意晚于网关 25s 软上限、stop/cancel 两条路都清定时器、两条入口混用不双开双关；另有 10 条**接线**用例接在真 `LensUi`（真的 DOM 按钮 + 真的指针处理器）上，把 `LONG_PRESS(9)`/`LONG_PRESS_RELEASE(10)` 从宿主 SDK 事件一路走到 UI，回归四条既有收尾路径，并钉住**手势起的录音不许被一个 `pointerleave` 杀掉**（§11-8 那个真链路 bug）。**6 个变异（掏空看门狗 / 调回 start 顺序 / 去掉防双开 / 不清定时器 / 长按不接线 / `setPttActive` 无条件置 `pttPressed`）逐个打红** | **19/19** |
+| **★ 长按 PTT 真链路**（手动，harness + 真麦克风 + 真 whisper + 真 DeepSeek） | 镜腿长按（`LONG_PRESS=9`，来源 `glassesR`）→ 开麦 → 说一句 → 长按释放，走完 S2→S3→S4→S5→S6→S7；断言落在最远端 —— agent 的 `~/.lens-agent/audit.jsonl` 里真的多了一行 `skill=weather tool=weather`。另一轮**只发长按、不发释放**，掐表：插件在 30s 自己关麦、按钮复位、toast 报「没等到松手」（控制台 `[ptt] 30000ms 未收到结束事件（来源 gesture），自动取消`）| 两轮均通过 |
 | **端到端闭环** `tests/e2e_sim.py` | 真服务进程 + 真 ASR + agent 测试夹具（`demo/fake_openclaw.py`，protocol v3 同一套，仅回复内容来自剧本）：配对→PTT→灌真实语音→转写→回复→帧约束（seq 单调/行宽/容器结构）→翻页→重连恢复→reset。**自足运行，不依赖任何仓库外服务**；打真 agent 见 §6.6 | 见下方运行输出 |
 | **生产部署冒烟** | systemd 正式实例（非测试实例）整轮问答 | S2→S3→S4→S6→S7，11.0s |
 
@@ -364,6 +365,8 @@ version / model / endpoint / production）。`demo/fake_openclaw.py` 会**自报
 所以 CI 跑完会解析 junit xml，**oracle 只要有一条 skip 就判失败**。
 真 agent 端到端（`e2e_agent.py`）**故意不进 CI**：它会产生真实付费调用，
 放进去等于每个 PR 都花钱，且外部服务抖动会把构建结果变成噪音 —— 它是发版前手动跑的验收项。
+
+CI 当前四个 job 全绿。**它此前连红 13 次而没人去看** —— 两个成因（一条 `.gitignore` 规则吞掉了 ASR 语料、e2e 起子进程时写死了 venv 路径）记在 §11-9。
 
 当前服务状态（交付时刻）：`{"ok": true, "asr_ready": true, "openclaw": true}`，服务 enabled（开机自启）+ active。
 
@@ -642,7 +645,7 @@ PYTHONPATH=. .venv/bin/python tests/e2e_mcp.py     # MCP 四进程真链路（~3
 LENS_LLM_API_KEY=sk-... PYTHONPATH=. .venv/bin/python tests/e2e_agent.py
 
 # 插件侧
-cd ../plugin && npm ci && npm run typecheck && npm test    # 99 个 vitest 用例
+cd ../plugin && npm ci && npm run typecheck && npm test    # 101 个 vitest 用例
 ```
 
 再生成两套 golden（**只有确认排版/画面改动是预期的**才做，diff 要有人看）：
@@ -754,7 +757,7 @@ claude mcp add --transport http even-glasses http://127.0.0.1:8765/mcp
 
 1. **后台存活**：插件工作中锁屏/切后台，计时到眼镜出现「⛓ 连接丢失」——得出真实可用窗口（iOS/Android 分别测）；
 2. **mic 仲裁**（本轮把长按镜腿绑成了我们自己的按住说话，所以这条拆成两半）：
-   - **长按能不能用**：长按镜腿说一句，看录音起不起得来 —— 这等价于验 §13.7-2「事件到不到 WebView」。收不到的话镜腿说不了话，手机按钮不受影响；
+   - **长按能不能用**：长按镜腿说一句，看录音起不起得来。**插件这半边已经在真链路上验完了**（harness 注入 `LONG_PRESS=9` + 真麦克风 + 真 whisper + 真 DeepSeek，走完 S2→S7，见 §4），真机上只剩「事件到不到 WebView」这一跳 —— 等价于 §13.7-2。收不到的话镜腿说不了话，手机按钮不受影响；
    - **抢麦**：从别处唤起官方 Even AI，插件聆听中是否出现「麦克风没有声音」告警（看门狗应在 ~1s 内报）；反向：Even AI 用完后插件能否恢复收音；
 3. **镜腿事件**：单击/双击在插件页是否如期翻页/退出（验证 TouchBar 事件对 WebView 的暴露）；若不行，翻页退化为手机按钮（已可用）；
 4. **audioControl 时长**：连续按住说到 25s 自动截停是否正常；再把 `max_utterance_seconds` 临时调到 60 试探固件上限；
@@ -868,6 +871,52 @@ claude mcp add --transport http even-glasses http://127.0.0.1:8765/mcp
    而单测全绿。**单测不会告诉你端到端的前提变了。**两处都按新前提重写了，
    并加了一条正面断言：说完那一帧的页脚必须是「1/N ›」。
 
+8. **一次「光标掠过按钮」把刚起来的录音杀掉了**。镜腿长按绑成按住说话之后拿真链路走第一遍：
+   `sysEvent: longPress` 到了、`mic open` 到了，**约一秒后 `mic closed`** —— 而日志里
+   自始至终没有任何 release 事件。录音自己没了。
+
+   成因是一行顺手的赋值：`ui.setPttActive(true)` 连带把 `pttPressed` 也置了真。这个标志的
+   语义是「此刻有一根指针正按在这个按钮上」，**只有 `pointerdown` 有资格声称它** ——
+   `pointerup` 与 `pointerleave` 两个处理器都以 `if (!this.pttPressed) return` 开头，
+   靠它挡住不该响应的事件。手势路径把它置真，等于替一根并不存在的手指把门打开了，
+   此后光标从按钮边缘掠过就能停掉一次录音。
+
+   而这一下连「掠过」都不必是用户做的：按钮文字这时刚从「按住说话」变成更长的「松开发送」，
+   按钮跟着变宽，**边界自己移到了静止的光标底下**，浏览器照样合成一个 `pointerleave`。
+   开麦与断掉之间那一秒，就是这么来的。
+
+   **101 条 vitest 全绿，而它在真链路上一次就复现了。** `ptt.test.ts` 里测状态机的那 9 条
+   把 `setUi` 注入成桩 —— 桩不会去动真的 `LensUi`，更碰不到那三个指针处理器；余下 8 条接线用例
+   确实走真 `LensUi`，但断言停在「按钮外观变成了正在说」，没有人在那之后再派发一个指针事件。
+   **注入桩的边界，就是这套测试能看见的边界。**
+
+   还有一件更该记下来的：**这条评审提过，是我判断错了。** 写 PTT 那一路在交付报告里点名问过
+   「`setPttActive(true)` 顺带置 `pttPressed`，合适吗」，我看了一眼觉得「合理，防双开」就放行了。
+   防双开根本不靠这个标志 —— `PttController.start()` 第一行就是 `if (this.pttActive) return`。
+
+   修法是**刻意不对称**的：置 false 照旧清掉它（外部取消之后手指真抬起时 `pointerup` 空转，
+   不会重复发一次 stop，这才是这个标志本来的用途），置 true 不设。两条新回归接在真 `LensUi`
+   上（真的 DOM 按钮、真的指针处理器）：手势起的录音被一个 `pointerleave` 打一下必须还活着；
+   而手机按钮真的按下—抬起时，仍然要能结束一次手势起的录音。把 `setPttActive` 改回无条件置真，
+   第一条立刻红。
+
+9. **CI 建起来之后连红 13 次，没人看**。去点开的时候，红的是网关那个 job：
+   `596 passed, 6 errors` —— `test_asr_quality.py` 对着不存在的音频 `av.open`，
+   报 `FileNotFoundError`。根因在 `.gitignore`：一条 `*.mp3` 把自建的 ASR 语料
+   （10 条 edge-tts，164KB）整个吞掉了，而同目录的 `manifest.json` 不是 mp3，
+   **它进了仓库** —— 于是 CI 照常收集这个模块，只是每条用例都读不到文件。
+   本机全绿，因为音频就躺在磁盘上；`git status` 也干净，因为被忽略的文件本来就不显示。
+   这条负向规则的代价已经付过一次（`gateway/tests/fixtures/*.mp3` 就有），第二次还是漏了。
+
+   补上之后 CI 换了个红法 —— 第二个 bug 一直躲在第一个后面：三个 e2e 起子进程时写死了
+   `str(ROOT / ".venv/bin/python")`，而 CI 上没有 venv（`setup-python` + pip 装进的是
+   系统 Python），拿到的又是一句 `FileNotFoundError`。改成 `sys.executable`，
+   本机跑时它就是那个 venv，两边都对。
+
+   教训不是这两个 bug 本身（修法都是三行），是**红了 13 次没人看**这件事。
+   CI 的全部价值来自「红 = 我必须停下来」这条约定；约定一破，它就退化成每次 push
+   都点亮一下的装饰品，而且是会让人更放心的那种装饰品。
+
 ## 12. 阶段三预告（设计已定稿，未开发）
 
 - 双层路由：「问格物，…」单次借调 / 「切到格物」改粘性默认 + 拼音兜底（hé mǐ sī→Hermes）；
@@ -896,7 +945,7 @@ claude mcp add --transport http even-glasses http://127.0.0.1:8765/mcp
 
 | 声称位置 | 当时状态 | 现在 |
 |---|---|---|
-| §4「插件协议冒烟（jsdom + 存根网关）25/25」 | **不存在** | ✅ **已补齐**（M7）：`plugin/tests/` 现有 **82** 个 vitest 用例。WS 协议层由 `ws-protocol.test.ts` 覆盖 **28** 条 —— 配对/resume/seq 过滤/PTT 与 PCM 合并/心跳/退避重连/自动 refresh/命令回执/未知消息容忍。打桩只到传输层（`tests/stub-gateway.ts`），被测的是真的 `LensClient` |
+| §4「插件协议冒烟（jsdom + 存根网关）25/25」 | **不存在** | ✅ **已补齐**（M7）：`plugin/tests/` 现有 **101** 个 vitest 用例。WS 协议层由 `ws-protocol.test.ts` 覆盖 **28** 条 —— 配对/resume/seq 过滤/PTT 与 PCM 合并/心跳/退避重连/自动 refresh/命令回执/未知消息容忍。打桩只到传输层（`tests/stub-gateway.ts`），被测的是真的 `LensClient` |
 | §4「心跳看门狗专项 通过」 | **不存在** | ✅ **已补齐**（M7）：4 条专项 —— 20s 一次 ping、两次无 pong 判定断线且**先通知看门狗再撕 socket**（顺序是关键：眼镜上必须先盖掉旧帧）、pong 按时不误判、断线只通知一次且重连后重新武装 |
 
 这两条当初是**被声称但不存在**的，所以补齐之后必须给出可复核的证据，而不是再声称一次。
@@ -961,12 +1010,12 @@ claude mcp add --transport http even-glasses http://127.0.0.1:8765/mcp
 | `voice/pipeline.py`（mic 看门狗） | ~230 | **11** + 端到端 |
 | HUD 帧序列（跨 `device/` + `voice/` + `formatting/` 的集成快照） | — | **25**（13 场景 68 帧 + 每帧不变量） |
 | `providers/`（AgentProvider 抽象 + 两个实现 + W6 溯源 + 连接生命周期） | ~450 | **34** |
-| `plugin/src`（TypeScript） | ~1500 | **82**（桥接层 30 + 字形契约 10 + 夹具接线 4 + **WS 协议层 28** + **PCM 载荷契约 10**） |
+| `plugin/src`（TypeScript） | ~1500 | **101**（桥接层 30 + **WS 协议层 28** + **按住说话状态机与接线 19** + 字形契约 10 + PCM 载荷契约 10 + 夹具接线 4） |
 
-端到端：语音链路 `tests/e2e_sim.py` **31/31**、MCP 链路 `tests/e2e_mcp.py` **27/27**
+端到端：语音链路 `tests/e2e_sim.py` **32/32**、MCP 链路 `tests/e2e_mcp.py` **27/27**
 （两者自足运行、不依赖任何仓库外服务），真 agent 链路 `tests/e2e_agent.py` **23/23**
 （需 `LENS_LLM_API_KEY`，会产生真实付费调用，故不进 CI）。
-**CI 已建**：`.github/workflows/ci.yml`，三个 job + 一道「外部 oracle 不许静默 skip」的闸门。
+**CI 已建**：`.github/workflows/ci.yml`，四个 job + 一道「外部 oracle 不许静默 skip」的闸门。
 
 ### 13.6 对抗式评审：M6 + M7 在提交前被 105 个 agent 找过一遍
 
@@ -1034,7 +1083,9 @@ golden 里那个场景的 7 帧、指出最后一帧正文停在「没有字号�
 
 1. BLE 渲染时序与闪烁（`textContainerUpgrade` 的真实往返延迟与合并窗口）
 2. 镜腿 / 戒指事件是否真的能到达 WebView（**官方模拟器把 `eventSource` 硬编码成 1**，测不了左右与戒指）。
-   本轮把**长按**绑成了按住说话，这条的分量随之变重：以前收不到只是少个没绑动作的手势，现在收不到就是镜腿说不了话
+   本轮把**长按**绑成了按住说话，这条的分量随之变重：以前收不到只是少个没绑动作的手势，现在收不到就是镜腿说不了话。
+   插件侧从 SDK 事件到开麦这一段已经用 harness 注入验完（含松手事件丢失时 30s 看门狗兜底关麦），
+   剩下的纯粹是「固件那一下到不到 WebView」这一跳
 3. 麦克风仲裁与 BLE 启麦延迟（`mic_warmup_seconds` 待回填）
 4. `audioControl` 的单次连续时长上限
 5. 插件在后台 / 锁屏下的存活时长
