@@ -150,9 +150,23 @@ async def run(gw_port: int, agent_port: int) -> None:
           ah.get("model") == "deepseek-v4-flash" and ah.get("provider") == "deepseek",
           f'{ah.get("provider")}/{ah.get("model")}')
     tool_names = {t["name"] for t in ah.get("tools", [])}
-    check("agent 只装了声明过的工具，且都是只读",
-          tool_names == {"now"} and all(t["capability"] == "read" for t in ah["tools"]),
-          ", ".join(f'{t["name"]}({t["capability"]})' for t in ah["tools"]))
+    # 这一条原来断言「工具只有 now，且全是只读」。工具表长起来之后它就该改了 ——
+    # 但**不能改成「有哪些工具都行」**：这里守的是「屏幕上跑的那个 agent
+    # 能干什么」，是拿去给人看的自证。所以改成逐条对齐声明，外加闸 1/闸 3 的
+    # 两条硬性质：没有 exec 档，写档必须钉死在具体资源上。
+    declared = {"now", "days_until", "device", "weather", "calc", "currency",
+                "list_show", "list_add", "list_remove",
+                "remind_set", "remind_list", "remind_cancel"}
+    check("agent 装的工具与声明逐条一致（多一个少一个都算没对上）",
+          tool_names == declared,
+          f"多出 {sorted(tool_names - declared)}；缺 {sorted(declared - tool_names)}")
+    caps = {t["capability"] for t in ah["tools"]}
+    check("★ 闸 1：能力枚举里没有 exec 档（只有 read / write）",
+          caps <= {"read", "write"}, ", ".join(sorted(caps)))
+    writers = [t for t in ah["tools"] if t["capability"] == "write"]
+    check("★ 闸 3：每个写工具都钉死在具体资源上",
+          bool(writers) and all(t.get("resources") for t in writers),
+          ", ".join(f'{t["name"]}→{t.get("resources")}' for t in writers))
 
     gh = json.loads(urllib.request.urlopen(f"{base}/healthz", timeout=5).read())
     ag = gh.get("agent") or {}
@@ -230,8 +244,11 @@ async def run(gw_port: int, agent_port: int) -> None:
             check("ask 路径不带工具（最高频路径的首字延迟不该为工具编排买单）",
                   len([f for f in cli.frames if f["state"] == "S5"]) == before_s5)
             body = s7b["containers"]["body"]
+            # 数字可以是中文数字：实测答过「直线约一千二百公里」，
+            # 只认阿拉伯数字会把一个正确的答案判成失败。
             check("回答真的答了这个问题（含距离数字与单位）",
-                  bool(re.search(r"\d", body)) and any(u in body for u in ("公里", "千米", "km", "KM")),
+                  bool(re.search(r"[\d零一二三四五六七八九十百千万两]", body))
+                  and any(u in body for u in ("公里", "千米", "km", "KM")),
                   body[:40])
 
         # ---------- 4. 「不是替身」的可执行证明 ----------

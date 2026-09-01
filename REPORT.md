@@ -46,7 +46,7 @@
 1. [系统形态与仓库地图](#1-系统形态与仓库地图)
 2. [各组件详细说明](#2-各组件详细说明)
 3. [一次问答的完整数据流（含实测耗时）](#3-一次问答的完整数据流)
-4. [验证结果汇总（pytest 588 + vitest 82 + 语音 e2e 31 + MCP e2e 27 + 真 agent e2e 21）](#4-验证结果汇总)
+4. [验证结果汇总（pytest 590 + vitest 82 + 语音 e2e 32 + MCP e2e 27 + 真 agent e2e 23）](#4-验证结果汇总)
 5. [【最重要】拿到眼镜后的完整上手流程](#5-拿到眼镜后的完整上手流程)
 6. [运维手册：服务、配置、日志、更新、**MCP 接入**](#6-运维手册)
 7. [排障速查表](#7-排障速查表)
@@ -121,8 +121,8 @@ EvenRealities-Claw/
 │   │   ├── tools.py           ←   能力枚举只有 READ/WRITE，**没有 exec 档**
 │   │   ├── audit.py           ←   每次工具调用一行 JSON
 │   │   └── llm/deepseek.py    ←   DeepSeek OpenAI 兼容端点（aiohttp 直发，理由见 AGENT-LAYER §6.2）
-│   ├── tests/                 ← 588 单测 + e2e_sim.py（语音 31 项）+ e2e_mcp.py（MCP 27 项）
-│   │                            + e2e_agent.py（真 agent 20 项）+ data/（语音数据集 / HUD golden）
+│   ├── tests/                 ← 590 单测 + e2e_sim.py（语音 32 项）+ e2e_mcp.py（MCP 27 项）
+│   │                            + e2e_agent.py（真 agent 23 项）+ data/（语音数据集 / HUD golden）
 │   ├── requirements.txt
 │   ├── requirements-mcp.txt   ← MCP 表面的依赖（网关本身不需要）
 │   └── README.md              ← 网关模块说明与实测数据
@@ -316,14 +316,14 @@ version / model / endpoint / production）。`demo/fake_openclaw.py` 会**自报
 
 | 验证 | 范围 | 结果 |
 |---|---|---|
-| `gateway/tests/`（pytest，全量） | 下列各专项之和：排版引擎/配对/JWT/设备抽象/遥测/控制面鉴权/控制面路由/MCP 工具/agent 层/agent 工具与提醒/ASR 质量/mic 看门狗/HUD golden/provider 连接生命周期 | **588/588** |
+| `gateway/tests/`（pytest，全量） | 下列各专项之和：排版引擎/配对/JWT/设备抽象/遥测/控制面鉴权/控制面路由/MCP 工具/agent 层/agent 工具与提醒/ASR 质量/mic 看门狗/HUD golden/provider 连接生命周期 | **590/590** |
 | 排版与认证 | 字形度量/折行禁则/像素盒分页/净化/markdown 降级/版式契约/配对/JWT/吊销/过期/持久化，含 3 宽度 × 31 语料的参数化不变量与 600 例随机模糊 | **169/169** |
 | **设备抽象层**（`tests/test_device.py`） | 帧节流与 coalescing、seq 单调、状态迁移、翻页四触发源等价与边界、租约冲突/续租/过期/抢占、外部渲染走同一排版引擎、事件缓冲增量拉取、快照结构 | **24/24** |
 | **会话装配与回收**（`tests/test_session.py`） | S5 工具态接活、错误分支、`reset` 重新注入小屏风格、消息路由、会话 TTL 只回收「离线且静默」、启动钩子只注册一次、ASR warmup 幂等 | **19/19** |
 | **排版引擎 vs 官方 pretext** | 17 075 码点的 advance + 1 376 个折行用例逐条比对（外部 oracle） | **零分歧** |
 | 插件构建链 | `npm install && tsc --noEmit && vite build`（strict 模式） | 全绿 |
 | 插件桥接冒烟（vitest + jsdom） | 真 SDK + 真 `GlassesController` + 保真夹具：建页只能一次/rebuild 接力、写失败不毒化去重缓存、BLE 卡死 5s 超时、缺字静默丢弃、折行与 pretext 一致、溢出裁行、前台进出 vs 真退出、5 手势 × 4 来源、未知 eventType 不变幽灵翻页、**遥测组装与 R1 戒指过滤**、麦被抢 | **30/30** |
-| **★ 真 agent 端到端** `tests/e2e_agent.py` | 三进程：真 `lens_agent` → 真 DeepSeek → 真网关 → 真设备 WS。灌真实语音走完 ASR，断言答案里有真的当前时间（工具真的被调用了）、审计日志真的落了、状态条徽记**没有**「?」、全程没收到 `reasoning_content`、帧满足全部约束 | **21/21** |
+| **★ 真 agent 端到端** `tests/e2e_agent.py` | 三进程：真 `lens_agent` → 真 DeepSeek → 真网关 → 真设备 WS。灌真实语音走完 ASR，断言答案里有真的当前时间（工具真的被调用了）、审计日志真的落了、状态条徽记**没有**「?」、全程没收到 `reasoning_content`、帧满足全部约束，以及**闸 1/闸 3 的现场自证**（能力枚举里没有 exec 档、每个写工具都报得出自己被钉在哪个文件上） | **23/23** |
 | **遥测上行通路**（`tests/test_telemetry.py`） | 无数据返回 None 而非零值、SN 出网关只留后 4 位、戒指整条拒收并计数、未确认型号同样拒收、字段白名单、poll 标注"可能是缓存"、过期仍返回最后已知值、cmd/cmd_result 一次性与重连作废、失败回执不覆盖已知值、低电量页脚只出现一次 | **28/28** |
 | **控制面鉴权**（`tests/test_control_auth.py`） | Bearer 共享密钥（多空格/大小写/非 ASCII token 不再 500）、反代后 loopback 判据失效的回归、配对码失败节流（按来源锁定 + 全局上限）、`trust_forwarded_for` 关闭时不认 XFF | **22/22** |
 | **控制面路由**（`tests/test_control_plane.py`） | 九个路由的正常与错误分支：未知设备 vs 从未连过、租约冲突 409 结构化体、正文超限 413、所有读接口带 `as_of`、事件游标增量 | **22/22** |
@@ -332,7 +332,7 @@ version / model / endpoint / production）。`demo/fake_openclaw.py` 会**自报
 | 插件字形与契约 | 用官方 pretext 逐字校验所有会上屏的字符；反向断言被替换的 10 个旧字形确实缺失；版式自洽 | **10/10** |
 | **官方模拟器实测** `tools/g2probe.mjs` | 8 屏自动化：满画布建页返回码、缺字渲染、26 个字形逐格墨迹判定、内容上限字节/字符口径 | 见 [docs/GLYPH-TABLE.md](docs/GLYPH-TABLE.md)、[docs/HARDWARE-SPEC.md](docs/HARDWARE-SPEC.md) |
 | **自研 agent 层**（`tests/test_agent.py`） | 思维链不上屏（3 条路径）、`tool_calls` 分片装配、模型 id 与 key 读取、技能路由的提示注入抗性、policy 白名单、工具能力档、loop 的降级与轮次上限、系统提示前缀字节稳定 | **51/51** |
-| **agent 工具与四道闸**（`tests/test_agent_tools.py`） | 12 个工具的真实执行，无打桩：`calc` 的注入表（`__import__` / 属性访问 / `9**9**9` 全被 AST 白名单挡住）、`days_until` 跨月跨年、`device` 没遥测时只说不知道、清单增删的全局查找与歧义拒绝、四道闸各自的构造期与运行期断言、路由表逐条、提示注入改不了 skill | **85/85** |
+| **agent 工具与四道闸**（`tests/test_agent_tools.py`） | 12 个工具的真实执行，无打桩：`calc` 的注入表（`__import__` / 属性访问 / `9**9**9` 全被 AST 白名单挡住）、`days_until` 跨月跨年、`device` 没遥测时只说不知道、清单增删的全局查找与歧义拒绝、四道闸各自的构造期与运行期断言、路由表逐条、提示注入改不了 skill | **87/87** |
 | **提醒排程**（`tests/test_agent_reminders.py`） | 排程/取消/列出、钟点换算（`at=09:00` 取下一次出现）、进程重启后按宽限期补发、id 不碰撞、会话之间互不可见、24 小时上限、一条响完不抹掉别的还在宽限期里等着的、**重连恢复与进程退出都不许清空磁盘** | **36/36** |
 | **ASR 质量**（`tests/test_asr_quality.py`） | 自建 10 条语音数据集（edge-tts，3 个音色，带 ground truth）跑**生产** `AsrEngine.final()`：CER 均值 0.0085（阈值 0.05）、最差 0.50 上限、弃转不计入错误但有上限、**热词回声零容忍** | **15/15** |
 | **mic 看门狗**（`tests/test_voice.py`） | 启麦慢与链路断用两个判据（此前混用一个硬编码 1.0s）；1.4s 处不误报的回归；预算非法值在加载期拒绝 | **11/11** |
@@ -553,7 +553,7 @@ systemctl --user restart lens-gateway
 ```bash
 cd ~/EvenRealities-Claw/gateway
 .venv/bin/pip install -r requirements-dev.txt      # 测试依赖（pytest / pytest-asyncio / mcp）
-PYTHONPATH=. .venv/bin/pytest tests/ -q            # 588 单测，秒级
+PYTHONPATH=. .venv/bin/pytest tests/ -q            # 590 单测，秒级
 PYTHONPATH=. .venv/bin/python tests/e2e_sim.py     # 语音端到端，自足运行（~2 分钟）
 PYTHONPATH=. .venv/bin/python tests/e2e_mcp.py     # MCP 四进程真链路（~30 秒）
 
@@ -739,7 +739,7 @@ claude mcp add --transport http even-glasses http://127.0.0.1:8765/mcp
    用户看到的是「工具轮次用尽」的道歉；二是 `list_remove` 在用户不报清单名时
    落到默认清单，**「删成功了但其实什么都没删」**。前者提到 4 并把预算按
    「模型往返次数」重定，后者改成找不到就在所有清单里找。
-   这一章新增 121 条单测（`test_agent_tools.py` 85 + `test_agent_reminders.py` 36），
+   这一章新增 123 条单测（`test_agent_tools.py` 87 + `test_agent_reminders.py` 36），
    16 个关键变异全部被咬住：把 `_eval_node` 换成真 `eval`、摘掉闸 3 的构造期检查、
    去掉清单全局查找、让 `device` 没数据时编 82%、去掉 stale 标注、
    提醒 id 退回会撞的时间戳、会话隔离被摘掉、宽限期失效、24 小时上限被摘掉、
@@ -778,6 +778,12 @@ claude mcp add --transport http even-glasses http://127.0.0.1:8765/mcp
    答「一条都没有」**，而内存里那条其实还会响；后者意味着每次重启都可能把所有
    待响的提醒清空，且是竞态的：收尾跑得赢就清空，跑不赢就留着。
    修成了两层（取消分支不碰磁盘 + 恢复扫描幂等），回归测试把两层同时摘掉才会红。
+
+   顺带暴露了一件更该记下来的事：**两条 e2e 里的翻页断言早就过期了，而我没重跑。**
+   「说完停在末页」这个行为在修 F7 时就改成了「重排不移动读者」，可 `e2e_sim.py`
+   和 `e2e_mcp.py` 的翻页仍然从末页往回翻 —— 于是 `prev` 翻不动、三条断言一起红，
+   而单测全绿。**单测不会告诉你端到端的前提变了。**两处都按新前提重写了，
+   并加了一条正面断言：说完那一帧的页脚必须是「1/N ›」。
 
 ## 12. 阶段三预告（设计已定稿，未开发）
 
@@ -875,7 +881,7 @@ claude mcp add --transport http even-glasses http://127.0.0.1:8765/mcp
 | `plugin/src`（TypeScript） | ~1500 | **82**（桥接层 30 + 字形契约 10 + 夹具接线 4 + **WS 协议层 28** + **PCM 载荷契约 10**） |
 
 端到端：语音链路 `tests/e2e_sim.py` **31/31**、MCP 链路 `tests/e2e_mcp.py` **27/27**
-（两者自足运行、不依赖任何仓库外服务），真 agent 链路 `tests/e2e_agent.py` **21/21**
+（两者自足运行、不依赖任何仓库外服务），真 agent 链路 `tests/e2e_agent.py` **23/23**
 （需 `LENS_LLM_API_KEY`，会产生真实付费调用，故不进 CI）。
 **CI 已建**：`.github/workflows/ci.yml`，三个 job + 一道「外部 oracle 不许静默 skip」的闸门。
 

@@ -1027,6 +1027,18 @@ def capability_of(name: str) -> Capability | None:
 
 
 def describe() -> list[dict[str, Any]]:
-    """给 /healthz 之类的自证接口用：现在到底装了哪些工具、各是什么能力。"""
-    return [{"name": t.name, "capability": t.capability.value,
-             "budget_ms": t.budget_ms, "label": t.label} for t in REGISTRY.values()]
+    """给 /healthz 之类的自证接口用：现在到底装了哪些工具、各是什么能力。
+
+    写工具连**它被钉在哪个文件上**一起报出来（闸 3）。这个接口的用处是当场
+    `curl` 一下自证「没有替身、也没有超出声明的权限」，而「写档只能写这一个
+    文件」是这套说法里最需要拿得出证据的一条 —— 只报一个 `write` 字样，
+    等于让人相信注释。agent 只监听回环，路径不外泄。
+    """
+    out = []
+    for t in REGISTRY.values():
+        row = {"name": t.name, "capability": t.capability.value,
+               "budget_ms": t.budget_ms, "label": t.label}
+        if t.resources:
+            row["resources"] = list(t.resources)
+        out.append(row)
+    return out

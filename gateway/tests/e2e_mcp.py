@@ -188,9 +188,11 @@ async def run(gw_port: int, mcp_port: int, secret: str) -> None:
                 check("被拒的写入没有污染屏幕", "乙想插队" not in still["containers"]["body"])
 
                 # ---------- 7. 翻页 ----------
+                # 方向是 next：外部渲染同样**停在第 1 页**（重排不移动读者），
+                # 原来写的 prev 在第 1 页翻不动 —— 那时分页器还会跟到末页。
                 turn = payload(await mcp.call_tool(
                     "hud_page", {"device_id": device_id, "lease_id": lease_id,
-                                 "direction": "prev"}))
+                                 "direction": "next"}))
                 check("hud_page 翻页生效", turn.get("turned") is True,
                       json.dumps(turn.get("page", {}), ensure_ascii=False))
                 paged = await wait_frame(lambda f: f["seq"] == turn["seq"])

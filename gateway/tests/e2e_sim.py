@@ -310,38 +310,44 @@ async def run_client() -> None:
               badges and all(b.endswith("?") for b in badges), " ".join(sorted(badges)))
 
         # ---------------- 7. 翻页（修 T3：原来只发了 reset，从没测过翻页）----------------
-        # S7 落在末页（_on_reply_text 跟随模式 _page = total-1），因此先 prev 再 next。
-        total = int(s7["containers"]["foot"].split("/")[-1].split()[0]) if "/" in s7["containers"]["foot"] else 1
+        # **S7 停在第 1 页**，不是末页。这一行原来写的是「S7 落在末页（跟随模式）」——
+        # 流式期间分页器会跟着最新一页跑，说完了也就停在末页，读者拿到的是一段话的
+        # 结尾。那个行为已经改掉了（重排不移动读者），而这段 e2e 没跟着改，
+        # 于是 prev 翻不动、三条断言一起红。留着这句话是因为**它才是这一段的前提**。
+        foot0 = s7["containers"]["foot"]
+        total = int(foot0.split("/")[-1].split()[0]) if "/" in foot0 else 1
         if check("回复分页 >1（翻页可测）", total > 1, f"共 {total} 页"):
-            page_last = s7["containers"]["body"]
+            page_first = s7["containers"]["body"]
 
             # 页脚形如「‹ 2/3 ›」：箭头只在**那个方向真的还有页**时出现
             prev_g, next_g = GLYPHS["page_prev"], GLYPHS["page_next"]
+            check("★ 说完停在第 1 页（读者从头读，不是被丢在末页）",
+                  f"1/{total}" in foot0 and prev_g not in foot0 and next_g in foot0, foot0)
 
-            await ws.send_json({"type": "page", "dir": "prev"})
+            await ws.send_json({"type": "page", "dir": "next"})
             p1 = await recv_until(is_frame("S7"), 8)
             foot1 = p1["containers"]["foot"] if p1 else ""
-            check("翻页 prev：页码递减且正文变化",
-                  p1 is not None and f"{total - 1}/{total}" in foot1
-                  and p1["containers"]["body"] != page_last,
+            check("翻页 next：页码递增且正文变化",
+                  p1 is not None and f"2/{total}" in foot1
+                  and p1["containers"]["body"] != page_first,
                   foot1 or "8s 内未收到翻页帧")
-            check("页脚箭头指向可翻方向（在首页则无 ‹）",
-                  p1 is not None and next_g in foot1 and (prev_g in foot1) == (total > 2),
+            check("页脚箭头指向可翻方向（在末页则无 ›）",
+                  p1 is not None and prev_g in foot1 and (next_g in foot1) == (total > 2),
                   foot1)
 
-            await ws.send_json({"type": "page", "dir": "next"})
+            await ws.send_json({"type": "page", "dir": "prev"})
             p2 = await recv_until(is_frame("S7"), 8)
             foot2 = p2["containers"]["foot"] if p2 else ""
-            check("翻页 next：回到末页且正文还原",
-                  p2 is not None and f"{total}/{total}" in foot2
-                  and p2["containers"]["body"] == page_last,
+            check("翻页 prev：回到第 1 页且正文还原",
+                  p2 is not None and f"1/{total}" in foot2
+                  and p2["containers"]["body"] == page_first,
                   foot2 or "8s 内未收到翻页帧")
-            check("末页无 › 箭头", p2 is not None and next_g not in foot2 and prev_g in foot2, foot2)
+            check("首页无 ‹ 箭头", p2 is not None and prev_g not in foot2 and next_g in foot2, foot2)
 
-            # 边界：已在末页再 next 应当不产生任何帧（_turn_page 的 new == _page 早返回）
-            await ws.send_json({"type": "page", "dir": "next"})
+            # 边界：已在首页再 prev 应当不产生任何帧（`Paginator.turn` 的早返回）
+            await ws.send_json({"type": "page", "dir": "prev"})
             stray = await expect_no_frame(2.0)
-            check("边界：末页再 next 不产生冗余帧", stray is None,
+            check("边界：首页再 prev 不产生冗余帧", stray is None,
                   f"意外帧 seq={stray['seq']}" if stray else "")
 
         # ---------------- 8. 断线重连：重放现场 ----------------

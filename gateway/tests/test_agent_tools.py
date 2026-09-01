@@ -255,6 +255,24 @@ class TestGates:
 # ------------------------------------------------------------------ 路由
 
 
+class TestSelfReport:
+    """`/healthz` 的工具表是拿去给人看的自证 —— 它得**说得出证据**，
+    而不是只报一个 `write` 字样让人相信注释。"""
+
+    def test_write_tools_report_what_they_are_pinned_to(self):
+        rows = {r["name"]: r for r in tools.describe()}
+        assert rows.keys() == tools.REGISTRY.keys()
+        for name, t in tools.REGISTRY.items():
+            if t.capability is tools.Capability.WRITE:
+                assert rows[name].get("resources") == list(t.resources), name
+                assert rows[name]["resources"], name
+
+    def test_no_capability_beyond_read_and_write(self):
+        """闸 1：能力枚举里没有 exec 档。这一条是**枚举本身**的性质，
+        不是某个工具的性质 —— 加一个 exec 档比给某个工具加权限容易得多。"""
+        assert {c.value for c in tools.Capability} == {"read", "write"}
+
+
 class TestBudgets:
     def test_write_skills_get_at_least_the_two_round_trip_budget(self):
         """写档超时的代价比只读档大：只读档超时是没答上，写档超时是**事没办成**，
