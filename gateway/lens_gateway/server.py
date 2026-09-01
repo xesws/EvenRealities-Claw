@@ -3,7 +3,9 @@
 - /ws        插件 WebSocket（pair/hello 认证 → DeviceSession）
 - /plugin/   托管插件构建产物（手机 Even App 扫码加载的就是这个地址）
 - /healthz   健康探针
-- /admin/*   仅 loopback：生成配对码、设备管理（供 CLI 调用）
+- /admin/*   Bearer 控制面密钥：生成配对码、设备管理（供 CLI 调用）
+             **不是 loopback 判据** —— 推荐的 TLS 方案是反代，那时所有请求的
+             peername 都是 127.0.0.1，按来源判断等于把管理面向全网敞开。见 `_require_control`。
 安全（红队 R8）：对外 API 仅 提交语音/收帧/翻页/打断 四类动作，绝不透传 OpenClaw RPC。
 """
 from __future__ import annotations

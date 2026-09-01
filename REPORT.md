@@ -279,12 +279,23 @@ ASR、设备 JWT 签名密钥、OpenClaw 全权 token 的网关待在一起。�
 |---|---|---|
 | 1. 能力分级 | `Capability` 枚举**只有 READ / WRITE 两档，没有 exec** | 枚举本身；无子进程、无 eval、无动态导入 |
 | 2. skill 由代码路由 | `skills.route()` 是确定性正则，**模型不参与选技能** | `test_agent.py::TestRouting` 含提示注入用例：用户说「切换到有写权限的技能」不会生效 |
-| 3. 资源边界 | WRITE 工具绑定在固定资源上，不接受模型给的路径 | 当前工具集里根本没有 WRITE |
+| 3. 资源边界 | WRITE 工具在**导入期**就绑定在固定路径上，不接受模型给的路径 | 四个 WRITE 工具各自报得出自己被钉在哪个文件上（见下表）；`e2e_agent.py` 让它们当场自证 |
 | 4. 审计 | 每次工具调用与每次拒绝各写一行 JSON | `e2e_agent.py` 断言真链路跑完后审计文件里确实有那一行 |
 
-**只有一个工具，这是有意的。** 当前工具集只有 `now`（查时间）。每加一个都要先过
-准入标准：一句话能问、一屏能答、两秒内能返。宁可少而确定 —— 一个只会查时间但
-绝不会误删文件的 agent，比一个什么都能干但需要你在 0.5 秒里判断的 agent 更适合戴在脸上。
+**十二个工具，四个能写。** 早期版本只有 `now`，那时闸 3 是**空转的**——
+没有 WRITE 工具，"资源边界"就没有被验证过。现在它是真的在拦：
+
+| 能力 | 工具 | 钉死的资源 |
+|---|---|---|
+| READ（8） | `now` `days_until` `device` `weather` `calc` `currency` `list_show` `remind_list` | — |
+| WRITE（4） | `list_add` `list_remove` | `~/.lens-agent/lists.json` |
+| | `remind_set` `remind_cancel` | `~/.lens-agent/reminders.json` |
+
+准入标准没变，每加一个都要先过：一句话能问、一屏能答、两秒内能返。
+**关键是写能力的形状**：这四个能写的东西，写错了的最坏后果是清单里多一行、
+或者一条提醒没响——都是一眼能看出来、一句话能撤销的。这正是
+「眼镜 agent 不应该拥有任何需要确认才能安全执行的能力」这条原则的落地：
+不是靠确认框拦住危险操作，而是**根本不给它危险的操作**。
 
 **W6：屏幕会自己告状。** 网关在握手时记录对端身份（`AgentInfo`：backend / name /
 version / model / endpoint / production）。`demo/fake_openclaw.py` 会**自报 `fixture: true`**，
@@ -316,10 +327,11 @@ version / model / endpoint / production）。`demo/fake_openclaw.py` 会**自报
 
 | 验证 | 范围 | 结果 |
 |---|---|---|
-| `gateway/tests/`（pytest，全量） | 下列各专项之和：排版引擎/配对/JWT/设备抽象/遥测/控制面鉴权/控制面路由/MCP 工具/agent 层/agent 工具与提醒/ASR 质量/mic 看门狗/HUD golden/provider 连接生命周期 | **590/590** |
-| 排版与认证 | 字形度量/折行禁则/像素盒分页/净化/markdown 降级/版式契约/配对/JWT/吊销/过期/持久化，含 3 宽度 × 31 语料的参数化不变量与 600 例随机模糊 | **169/169** |
-| **设备抽象层**（`tests/test_device.py`） | 帧节流与 coalescing、seq 单调、状态迁移、翻页四触发源等价与边界、租约冲突/续租/过期/抢占、外部渲染走同一排版引擎、事件缓冲增量拉取、快照结构 | **24/24** |
+| `gateway/tests/`（pytest，全量） | 下列各专项之和：排版引擎/配对/JWT/设备抽象/遥测/控制面鉴权/控制面路由/MCP 工具/agent 层/agent 工具与提醒/ASR 质量/mic 看门狗/HUD golden/provider 连接生命周期 | **596/596** |
+| 排版与认证 | 字形度量/折行禁则/像素盒分页/净化/markdown 降级/版式契约/配对/JWT/吊销/过期/持久化，含 3 宽度 × 31 语料的参数化不变量与 600 例随机模糊 | **170/170** |
+| **设备抽象层**（`tests/test_device.py`） | 帧节流与 coalescing、seq 单调、状态迁移、翻页四触发源等价与边界、租约冲突/续租/过期/抢占、外部渲染走同一排版引擎、事件缓冲增量拉取、快照结构 | **30/30** |
 | **会话装配与回收**（`tests/test_session.py`） | S5 工具态接活、错误分支、`reset` 重新注入小屏风格、消息路由、会话 TTL 只回收「离线且静默」、启动钩子只注册一次、ASR warmup 幂等 | **19/19** |
+| **provider 选择与 W6 溯源**（`tests/test_providers.py`） | provider 工厂与配置期拒绝未知值、徽记/名字跟着 provider 走、握手自报 `fixture` 的三种嵌套形状、**未连接 = unknown 而不是「假」**（不知道对端是谁时不冤枉它）、连上真 agent 才算可信 | **34/34** |
 | **排版引擎 vs 官方 pretext** | 17 075 码点的 advance + 1 376 个折行用例逐条比对（外部 oracle） | **零分歧** |
 | 插件构建链 | `npm install && tsc --noEmit && vite build`（strict 模式） | 全绿 |
 | 插件桥接冒烟（vitest + jsdom） | 真 SDK + 真 `GlassesController` + 保真夹具：建页只能一次/rebuild 接力、写失败不毒化去重缓存、BLE 卡死 5s 超时、缺字静默丢弃、折行与 pretext 一致、溢出裁行、前台进出 vs 真退出、5 手势 × 4 来源、未知 eventType 不变幽灵翻页、**遥测组装与 R1 戒指过滤**、麦被抢 | **30/30** |
@@ -331,19 +343,22 @@ version / model / endpoint / production）。`demo/fake_openclaw.py` 会**自报
 | **★ MCP 四进程真链路** `tests/e2e_mcp.py` | 真 MCP 客户端 → 真 `lens_mcp` 进程 → 真网关进程 → 真设备 WebSocket。断言落在最远端：调完工具后**帧必须真的从设备 WS 出来**；并发写屏返回 `LEASE_HELD` 而非最后写入者赢；`ptt start` 抢占后原租约 `LEASE_INVALID` 且事件可轮询到 | **27/27** |
 | 插件字形与契约 | 用官方 pretext 逐字校验所有会上屏的字符；反向断言被替换的 10 个旧字形确实缺失；版式自洽 | **10/10** |
 | **官方模拟器实测** `tools/g2probe.mjs` | 8 屏自动化：满画布建页返回码、缺字渲染、26 个字形逐格墨迹判定、内容上限字节/字符口径 | 见 [docs/GLYPH-TABLE.md](docs/GLYPH-TABLE.md)、[docs/HARDWARE-SPEC.md](docs/HARDWARE-SPEC.md) |
-| **自研 agent 层**（`tests/test_agent.py`） | 思维链不上屏（3 条路径）、`tool_calls` 分片装配、模型 id 与 key 读取、技能路由的提示注入抗性、policy 白名单、工具能力档、loop 的降级与轮次上限、系统提示前缀字节稳定 | **51/51** |
+| **自研 agent 层**（`tests/test_agent.py`） | 思维链不上屏（3 条路径）、`tool_calls` 分片装配、模型 id 与 key 读取、技能路由的提示注入抗性、policy 白名单、工具能力档、loop 的降级与轮次上限、系统提示前缀字节稳定 | **67/67** |
 | **agent 工具与四道闸**（`tests/test_agent_tools.py`） | 12 个工具的真实执行，无打桩：`calc` 的注入表（`__import__` / 属性访问 / `9**9**9` 全被 AST 白名单挡住）、`days_until` 跨月跨年、`device` 没遥测时只说不知道、清单增删的全局查找与歧义拒绝、四道闸各自的构造期与运行期断言、路由表逐条、提示注入改不了 skill | **87/87** |
-| **提醒排程**（`tests/test_agent_reminders.py`） | 排程/取消/列出、钟点换算（`at=09:00` 取下一次出现）、进程重启后按宽限期补发、id 不碰撞、会话之间互不可见、24 小时上限、一条响完不抹掉别的还在宽限期里等着的、**重连恢复与进程退出都不许清空磁盘** | **36/36** |
+| **提醒排程**（`tests/test_agent_reminders.py`） | 排程/取消/列出、钟点换算（`at=09:00` 取下一次出现）、进程重启后按宽限期补发、id 不碰撞、会话之间互不可见、24 小时上限、一条响完不抹掉别的还在宽限期里等着的、**重连恢复与进程退出都不许清空磁盘**、**送不出去不许当成响过了**、**一条调试 CLI 连上来不许挤掉网关的通知通道** | **42/42** |
 | **ASR 质量**（`tests/test_asr_quality.py`） | 自建 10 条语音数据集（edge-tts，3 个音色，带 ground truth）跑**生产** `AsrEngine.final()`：CER 均值 0.0085（阈值 0.05）、最差 0.50 上限、弃转不计入错误但有上限、**热词回声零容忍** | **15/15** |
 | **mic 看门狗**（`tests/test_voice.py`） | 启麦慢与链路断用两个判据（此前混用一个硬编码 1.0s）；1.4s 处不误报的回归；预算非法值在加载期拒绝 | **11/11** |
 | **HUD 帧序列 golden**（`tests/test_hud_golden.py`） | 13 个场景 68 帧快照 + 每帧硬性不变量：**所有字形都在 G2 字库内**、行宽不超容器、行数不超 `floor(h/27)`、无裸 markdown、seq 单调、页脚与 `meta.page` 同源、W6 徽记全程一致 | **25/25** |
 | **插件 WS 协议冒烟（存根网关）** | 配对→resume→翻页→PTT 上行→PCM 合并→心跳看门狗→退避重连→自动 refresh→旧 seq 丢弃→未知消息容忍。打桩只到传输层，被测的是真的 `LensClient`；**5 个变异测试确认这套断言会咬** | **28/28** |
 | **插件 PCM 载荷契约** | 实测钉住 SDK 对 `number[]` / base64 / `Uint8Array` 三种载荷 × 三种信封的归一行为；解不出来的形状不崩、不把坏数据交给上行、并留下可排障的日志 | **10/10** |
+| **按住说话状态机**（`tests/ptt.test.ts`） | 手机按钮与镜腿长按共用一个状态机：先开麦确认成功才发 `ptt start`（B2/B3 回归）、开麦失败不发 start、**松手事件丢了由看门狗兜底关麦**、看门狗默认 30s 刻意晚于网关 25s 软上限、stop/cancel 两条路都清定时器、两条入口混用不双开双关；另有 7 条**接线**用例把 `LONG_PRESS(9)`/`LONG_PRESS_RELEASE(10)` 从宿主 SDK 事件一路走到 UI，并回归四条既有收尾路径。**5 个变异（掏空看门狗 / 调回 start 顺序 / 去掉防双开 / 不清定时器 / 长按不接线）逐个打红** | **17/17** |
 | **端到端闭环** `tests/e2e_sim.py` | 真服务进程 + 真 ASR + agent 测试夹具（`demo/fake_openclaw.py`，protocol v3 同一套，仅回复内容来自剧本）：配对→PTT→灌真实语音→转写→回复→帧约束（seq 单调/行宽/容器结构）→翻页→重连恢复→reset。**自足运行，不依赖任何仓库外服务**；打真 agent 见 §6.6 | 见下方运行输出 |
 | **生产部署冒烟** | systemd 正式实例（非测试实例）整轮问答 | S2→S3→S4→S6→S7，11.0s |
 
 **CI 已建**（`.github/workflows/ci.yml`，M7）：插件 typecheck + vitest + build、
-网关 pytest、端到端（模拟链路 + MCP 四进程）三个 job。其中有一道刻意加的闸门 ——
+网关 pytest、端到端（模拟链路 + MCP 四进程）、`systemd-analyze verify deploy/*.service` 四个 job。
+最后那个是新加的，理由与它守的东西同源 —— unit 写错的表现是**开机时静默失败**，
+人只会在「重启之后眼镜连不上」时才发现，跟改坏的那一行隔着几天。其中有一道刻意加的闸门 ——
 排版引擎的外部 oracle 需要 node 与 `@evenrealities/pretext`，缺了会整模块 skip，
 那样 CI 会绿而「我们的折行与官方一致」这个最关键的结论根本没被验证过；
 所以 CI 跑完会解析 junit xml，**oracle 只要有一条 skip 就判失败**。
@@ -371,6 +386,10 @@ version / model / endpoint / production）。`demo/fake_openclaw.py` 会**自报
    - `asr_ready: false` 说明服务刚重启还在热身，等 1 分钟刷新。
 
 **强烈建议顺手做**（防长对话越聊越卡）：同实例页 → 操作 → 实例设置 → **更改积分规格 → Unlimited**。这台是 t4g 突发型实例，ASR 是持续 CPU 负载，积分烧光后所有转写延迟会恶化 3-5 倍（红队 R4，开发期间已摸到边）。
+
+> 有域名之后这一步会变：改成放行 **80 + 443**（Let's Encrypt 要从公网访问进来），
+> 并把 8443 的公网入站**关掉** —— 那时网关只监听 `127.0.0.1`，那条规则留着只会让人以为它还通。
+> 装机脚本见 6.4。
 
 ### 5.2 一次性准备 B：把插件装进 Even App（~3 分钟）
 
@@ -405,7 +424,8 @@ version / model / endpoint / production）。`demo/fake_openclaw.py` 会**自报
 
 | 想做什么 | 怎么做 |
 |---|---|
-| **提问** | 手机亮屏停在插件页 → **按住大按钮说话（≤25 秒）→ 松手** → 抬眼看眼镜 |
+| **提问** | 手机亮屏停在插件页 → **长按镜腿**说话（≤25 秒）→ 松手 → 抬眼看眼镜 |
+| 提问（不想抬手） | 同上，改成**按住手机上的大按钮**。两条路共用一个状态机，混着用不会开两次麦 |
 | 重说 | 转写确认的 1.2 秒内重新按住说话 |
 | 翻页 | **单击镜腿**；或看手机上的眼镜预览 |
 | 打断长回答 | 手机「打断」按钮（已收到的内容保留可翻页） |
@@ -418,7 +438,8 @@ version / model / endpoint / production）。`demo/fake_openclaw.py` 会**自报
 ### 5.5 注意事项（设计如此，不是 bug）
 
 - **手机必须亮屏且停在插件页**。锁屏/切后台后 mic 和连接大概率被系统挂起（Even App 的 WebView 限制，我们控制不了）——此时眼镜会显示「⛓ 连接丢失」而不是假装正常。回到插件页自动重连，断线期间工部仍在干活，回来直接看结果。
-- 当前是 http/ws 明文传输（官方 dev 模式支持）。升级 TLS 只差一个域名：见 6.4。
+- 当前是 http/ws 明文传输（官方 dev 模式支持）。升级 TLS 只差一个域名，模板与装机脚本已经就位：见 6.4。
+  **在那之前只在你信得过的网络里用** —— 配对码与 refresh token 都走明文。
 
 ### 5.6 没有眼镜也能先玩（现在就行）
 
@@ -477,14 +498,49 @@ cd gateway
 
 ### 6.1 服务管理（systemd 用户服务）
 
+两个服务，**互相独立**：
+
+| unit | 是什么 | 什么时候需要 |
+|---|---|---|
+| `lens-gateway` | 网关（ASR + HUD + 设备） | 总是 |
+| `lens-agent` | 自研 agent | 只有 `config.json` 里 `agent.provider = "lens"` 时 |
+
 ```bash
-systemctl --user status lens-gateway     # 状态
-systemctl --user restart lens-gateway    # 重启（warmup ~1 分钟，healthz 的 asr_ready 为准）
-systemctl --user stop/start lens-gateway
-journalctl --user -u lens-gateway -n 100 --no-pager   # 日志
-curl -s http://127.0.0.1:8443/healthz                  # 健康（本机）
+systemctl --user status  lens-gateway     # 状态
+systemctl --user restart lens-gateway     # 重启（warmup ~1 分钟，healthz 的 asr_ready 为准）
+journalctl --user -u lens-gateway -n 100 --no-pager
+
+systemctl --user status  lens-agent       # agent 同上一套
+journalctl --user -u lens-agent -f
+
+curl -s http://127.0.0.1:8443/healthz     # 网关健康（本机）
+curl -s http://127.0.0.1:18790/healthz    # agent 自报模型与工具清单
 ```
-服务已 enable（跟随用户会话自启；崩溃 3 秒自动拉起；内存上限 3G）。
+
+两个都 enable、崩溃 3 秒自动拉起；内存上限网关 3G、agent 512M。
+
+几件反直觉的事，写在这里省得下次现查：
+
+- **网关不会拉起 agent。** 它对 agent 是纯客户端（懒连接，socket 没了下次说话自己重连），
+  所以两个 unit 之间只有 `After=` 排序，没有 `Requires=`。**重启任何一个都不会带走另一个** ——
+  这是有意的：绑上依赖的话，重启 agent 会顺手把所有已连眼镜的 WebSocket 一起踢掉。
+- 刚重启完 agent，网关 `/healthz` 里的 `agent.connected` 是 `false` **属于正常**，
+  第一次说话时会自己连上。想立刻变 `true` 就重启网关（代价见上一条）。
+- 用户服务默认只在你登录期间活着。装机脚本会打开 `loginctl enable-linger`，
+  没打开的话服务器一重启这两个都不会自己回来。
+
+装（在服务器上，各跑一次即可）：
+
+```bash
+bash scripts/install-service.sh          # 网关
+bash scripts/install-agent-service.sh    # agent（provider=lens 才需要）
+bash scripts/install-agent-service.sh --check   # 只体检，不碰 systemd
+```
+
+`install-agent-service.sh` 的 preflight 占了脚本一半篇幅，因为 agent **缺 key 时是起来又立刻挂**，
+而 `Restart=always` 会让它每 3 秒重来一次 —— 表现是网关一切正常、只有说话没反应。
+它会当场点名缺哪个变量、`.env` 里的 `export` 行 systemd 读不了、以及
+**`.env` 里的 `MODEL_NAME` 不被 agent 读取**（要写 `LENS_LLM_MODEL`）。
 
 ### 6.2 设备管理
 
@@ -536,9 +592,34 @@ $VENV -m lens_gateway.main revoke dev_xxx  # 吊销某台手机（怀疑凭证�
 
 ### 6.4 升级 TLS（有域名后）
 
-1. 域名 A 记录 → `<SERVER_IP>`；
-2. 装 caddy，Caddyfile 两行：`你的域名 { reverse_proxy 127.0.0.1:8443 }`（自动 Let's Encrypt）；
-3. 安全组放行 443，扫码 URL 换 `https://你的域名/plugin/`。插件地址自动推导会跟着用 `wss://`。
+**网关侧一行代码都不用改**：`run_app` 本来就没有 `ssl_context`，监听地址由 `config.json` 决定；
+`_client_key()` 早就写好了 `X-Forwarded-For` 分支；控制面鉴权也早从 loopback 判据换成了 Bearer。
+所以这一步全是配置。
+
+```bash
+# 1. 域名 A 记录 → 本机公网 IP，等 DNS 生效
+# 2. 安全组 / ufw 放行 80 与 443（Let's Encrypt 要从公网访问进来）
+LENS_DOMAIN=lens.example.com bash scripts/install-tls.sh --check   # 先体检
+LENS_DOMAIN=lens.example.com bash scripts/install-tls.sh           # 再装
+# 3. 扫码 URL 换成 https://lens.example.com/plugin/
+```
+
+脚本做四件事：装 caddy、把 `deploy/Caddyfile.example` 渲染到 `/etc/caddy/Caddyfile`（**先 validate 再落盘**）、
+把 `config.json` 的 `host` 收回 `127.0.0.1` 且 `trust_forwarded_for` 打开（**改前备份并打印 diff**）、
+重启后自检 `https://域名/healthz`。
+
+两个容易漏的点，脚本会拦：
+
+- **DNS 必须先指对。** 解析到别人家 IP 时它直接拒绝 —— Let's Encrypt 的失败次数本身有配额
+  （同域名每小时 5 次），连试几轮就得等一小时。
+- **`host` 必须收回回环。** 不收的话 `0.0.0.0:8443` 明文口还开着，任何人都能绕过刚装好的 TLS。
+  装完记得把安全组里 8443 的公网入站一并关掉。
+
+插件那头不用动：`ui.ts` 的 `defaultGatewayUrl` 按 `location.protocol` 推导，页面是 https 打开的，
+WebSocket 就自动是 `wss://`。
+
+**还没有域名**：先别装。直接跑脚本会打印三条路（买个便宜域名 ✅ / `tls internal` + 手机装根证书 ⚠️ /
+`sslip.io` 旁路 ⚠️）以及各自的代价。在此之前明文只在你信得过的网络里用。
 
 ### 6.5 更新代码
 
@@ -553,7 +634,7 @@ systemctl --user restart lens-gateway
 ```bash
 cd ~/EvenRealities-Claw/gateway
 .venv/bin/pip install -r requirements-dev.txt      # 测试依赖（pytest / pytest-asyncio / mcp）
-PYTHONPATH=. .venv/bin/pytest tests/ -q            # 590 单测，秒级
+PYTHONPATH=. .venv/bin/pytest tests/ -q            # 596 单测，秒级
 PYTHONPATH=. .venv/bin/python tests/e2e_sim.py     # 语音端到端，自足运行（~2 分钟）
 PYTHONPATH=. .venv/bin/python tests/e2e_mcp.py     # MCP 四进程真链路（~30 秒）
 
@@ -561,7 +642,7 @@ PYTHONPATH=. .venv/bin/python tests/e2e_mcp.py     # MCP 四进程真链路（~3
 LENS_LLM_API_KEY=sk-... PYTHONPATH=. .venv/bin/python tests/e2e_agent.py
 
 # 插件侧
-cd ../plugin && npm ci && npm run typecheck && npm test    # 82 个 vitest 用例
+cd ../plugin && npm ci && npm run typecheck && npm test    # 99 个 vitest 用例
 ```
 
 再生成两套 golden（**只有确认排版/画面改动是预期的**才做，diff 要有人看）：
@@ -655,11 +736,11 @@ claude mcp add --transport http even-glasses http://127.0.0.1:8765/mcp
 | MCP 层鉴权 | ⚠️ 无 | MCP 进程本身不校验调用方，只能绑 `127.0.0.1`。控制面（网关侧）有 Bearer，所以**越权拿不到设备凭证**，但同机上任何进程都能写这块屏 |
 | MCP 多客户端身份 | ⚠️ 靠自报 | MCP 规范没有 session 概念，服务器分不清谁在调用；仲裁由租约的 `holder` 字符串承担，客户端自报。恶意客户端可以冒用别人的 holder 名 —— 但仍然抢不到别人手上的租约 |
 | 控制面限流 | ⚠️ 仅正文上限 | `MAX_RENDER_CHARS=20000`（超出 413），无 QPS 限流 |
-| TLS | ⚠️ | 当前 http/ws；差一个域名（6.4） |
+| TLS | ⚠️ 差一个域名 | 反代模板与装机脚本已在仓库里（`deploy/Caddyfile.example` + `scripts/install-tls.sh`），网关侧**不需要改代码**。把 A 记录指过来就能跑，见 6.4 |
 | 锁屏可用 | ❌ 设计内放弃 | 产品定位"亮屏按住说话"；锁屏存活时长属于真机实测项 |
 | 多 agent 路由 | ❌ 阶段三 | 当前固定单 agent；"问格物…"/"切到…"文法在设计文档已定稿 |
 | 自研 agent 的容器隔离 | ❌ AGENT-LAYER P3 | 进程边界已经有了（agent 单独进程、只监听回环、LLM key 只存在于 agent 进程），容器化演练未做 |
-| 自研 agent 的工具集 | ⚠️ 只有 1 个 | 当前只有 `now`（查时间）。这是**有意的起点**而不是遗漏：每加一个工具都要先过 §9.1 的准入标准（一句话能问、一屏能答、两秒内能返），宁可少而确定 |
+| 自研 agent 的工具集 | ✅ 12 个 | 8 读（`now` `days_until` `device` `weather` `calc` `currency` `list_show` `remind_list`）+ 4 写（`list_add`/`list_remove` → `lists.json`，`remind_set`/`remind_cancel` → `reminders.json`）。准入标准不变：一句话能问、一屏能答、两秒内能返 |
 | lens agent 协议层鉴权 | ⚠️ 无 | 与 MCP 同理：只绑 `127.0.0.1`，`server.py` 会拒绝绑到非回环地址。同机进程仍可调用 |
 | TTS 语音回放 | ❌ 阶段三 | 你已确认 MVP 纯 HUD 文本 |
 | 都察告警上屏 | ❌ 阶段三 | 告警管道（去重/限流/熔断）设计已定稿 |
@@ -672,7 +753,9 @@ claude mcp add --transport http even-glasses http://127.0.0.1:8765/mcp
 拿到眼镜后第一周建议完成（每项 10-20 分钟），结果用于校准 `config.json`：
 
 1. **后台存活**：插件工作中锁屏/切后台，计时到眼镜出现「⛓ 连接丢失」——得出真实可用窗口（iOS/Android 分别测）；
-2. **mic 仲裁**：插件聆听中长按镜腿触发官方 Even AI，看是否出现「麦克风没有声音」告警（看门狗应在 ~1s 内报）；反向：Even AI 用完后插件能否恢复收音；
+2. **mic 仲裁**（本轮把长按镜腿绑成了我们自己的按住说话，所以这条拆成两半）：
+   - **长按能不能用**：长按镜腿说一句，看录音起不起得来 —— 这等价于验 §13.7-2「事件到不到 WebView」。收不到的话镜腿说不了话，手机按钮不受影响；
+   - **抢麦**：从别处唤起官方 Even AI，插件聆听中是否出现「麦克风没有声音」告警（看门狗应在 ~1s 内报）；反向：Even AI 用完后插件能否恢复收音；
 3. **镜腿事件**：单击/双击在插件页是否如期翻页/退出（验证 TouchBar 事件对 WebView 的暴露）；若不行，翻页退化为手机按钮（已可用）；
 4. **audioControl 时长**：连续按住说到 25s 自动截停是否正常；再把 `max_utterance_seconds` 临时调到 60 试探固件上限；
 5. **真实刷新与字宽**：盯着流式回复看是否闪烁/撕裂（调 `throttle_ms`）。
@@ -950,7 +1033,8 @@ golden 里那个场景的 7 帧、指出最后一帧正文停在「没有字号�
 剩下的是：
 
 1. BLE 渲染时序与闪烁（`textContainerUpgrade` 的真实往返延迟与合并窗口）
-2. 镜腿 / 戒指事件是否真的能到达 WebView（**官方模拟器把 `eventSource` 硬编码成 1**，测不了左右与戒指）
+2. 镜腿 / 戒指事件是否真的能到达 WebView（**官方模拟器把 `eventSource` 硬编码成 1**，测不了左右与戒指）。
+   本轮把**长按**绑成了按住说话，这条的分量随之变重：以前收不到只是少个没绑动作的手势，现在收不到就是镜腿说不了话
 3. 麦克风仲裁与 BLE 启麦延迟（`mic_warmup_seconds` 待回填）
 4. `audioControl` 的单次连续时长上限
 5. 插件在后台 / 锁屏下的存活时长
