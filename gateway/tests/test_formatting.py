@@ -30,7 +30,12 @@ from lens_gateway.formatting import (
     wrap_line,
     wrap_text,
 )
-from lens_gateway.formatting.wrap import NO_LINE_END, NO_LINE_START, WidthTooSmall
+from lens_gateway.formatting.wrap import (
+    NO_LINE_END,
+    NO_LINE_START,
+    WidthTooSmall,
+    _tokenize,
+)
 from tests.data.formatting.corpus import CASES, WIDTHS, stream_prefixes
 
 _GOLDEN = Path(__file__).parent / "data" / "formatting" / "golden.json"
@@ -204,6 +209,23 @@ class TestWrap:
     def test_latin_word_not_split_when_it_fits(self) -> None:
         lines = wrap_line("模型名是 OpenClaw，它跑在服务器上，名字不能被切断，再多写一点凑满一行看看", 300)
         assert any("OpenClaw" in ln for ln in lines)
+
+    @pytest.mark.parametrize("token", ["75.52", "1,234", "3:45", "12/25", "3.5x", "v1.2.3"])
+    def test_inner_separator_is_not_a_break_opportunity(self, token: str) -> None:
+        """回归：真跑演示时汇率答案里的 `75.52` 被断成「75.」和「52」两行。
+
+        读者看到的是两个数 —— 而且屏幕上看不出这里出过事。小数点/千分位/
+        时刻冒号/日期斜杠夹在数字中间时不是断行机会；放得下就必须整体在一行。
+        """
+        text = f"这一句里有 {token} 这个数，后面还得再写点字凑够好几行才测得出断行"
+        for width in range(48, 420, 5):
+            lines = wrap_line(text, width)
+            if text_width(token) <= width:
+                assert any(token in ln for ln in lines), (width, lines)
+
+    def test_sentence_period_is_still_a_break_opportunity(self) -> None:
+        """反向断言：句末的 `.` 后面不是词字符，不该被并进词里。"""
+        assert _tokenize("Done. Next") == ["Done", ".", " ", "Next"]
 
     def test_overlong_word_is_hard_cut(self) -> None:
         lines = wrap_line("supercalifragilisticexpialidocious", 100)

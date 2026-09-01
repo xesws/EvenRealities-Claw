@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import time
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -25,8 +26,78 @@ def store(tmp_path, monkeypatch):
     return path
 
 
+async def _swallow(_key: str, _text: str) -> None:
+    """一个什么都不做的响铃端。**不能用 lambda** —— 它得是协程。"""
+
+
 async def call(name: str, **kw) -> str:
     return (await tools.invoke(name, "c", json.dumps(kw))).content
+
+
+class TestClockTimes:
+    """「明天九点提醒我看牙医」。
+
+    这条路曾经根本不存在：路由把它丢给兜底档，屏幕上回的是「我还不会设提醒」——
+    而它刚刚才为「10 分钟后」设过一条。**说自己做不到一件做得到的事**，
+    用户的反应和被编了一个答案是一样的：不会再问第二次。
+
+    钟点换算放在工具里而不是让模型自己算，是因为算错的症状**要到几小时后才出现**：
+    设的那一刻它回的仍然是「好的」。
+    """
+
+    def _minutes_to(self, hh: int, mm: int, day: str | None = None) -> float:
+        """测试自己独立算一遍「还有多少分钟」，不复用被测代码的实现。"""
+        now = datetime.now()
+        target = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
+        if day == "tomorrow" or (day is None and target <= now):
+            target += timedelta(days=1)
+        return (target - now).total_seconds() / 60
+
+    async def test_a_clock_time_lands_on_the_next_occurrence(self, store):
+        await call("remind_set", at="09:00", text="call the dentist")
+        rows = json.loads(store.read_text())
+        assert len(rows) == 1
+        want = time.time() + self._minutes_to(9, 0) * 60
+        assert abs(rows[0]["at"] - want) < 5
+
+    async def test_tomorrow_is_a_day_later_than_today(self, store):
+        """`day` 省略时取下一次出现 —— 显式说 tomorrow 必须比它晚整整一天。"""
+        a = self._minutes_to(9, 0, "today")
+        b = self._minutes_to(9, 0, "tomorrow")
+        assert abs((b - a) - 24 * 60) < 0.01
+
+    @pytest.mark.parametrize("bad", ["9am", "25:00", "09:60", "", "明早九点", "9"])
+    async def test_unreadable_clock_is_refused_not_guessed(self, store, bad):
+        r = await call("remind_set", at=bad, text="x")
+        assert not store.exists() or json.loads(store.read_text()) == []
+        assert not tools.PENDING_REMINDERS.get()
+        assert "HH:MM" in r or "没有说要提醒什么" in r or "no reminder text" in r
+
+    async def test_both_forms_at_once_is_refused(self, store):
+        """两个都给了就不猜：猜错的后果是几小时后才暴露的错误时刻。"""
+        r = await call("remind_set", at="09:00", minutes=10, text="x")
+        assert not store.exists() or json.loads(store.read_text()) == []
+        assert "minutes" in r
+
+    async def test_a_clock_time_already_past_today_is_refused(self, store):
+        now = datetime.now()
+        past = now - timedelta(hours=2)
+        r = await call("remind_set", at=f"{past.hour:02d}:{past.minute:02d}",
+                       day="today", text="x")
+        assert not store.exists() or json.loads(store.read_text()) == []
+        assert "将来" in r or "future" in r
+
+    def test_the_model_is_told_not_to_do_the_arithmetic(self):
+        """契约里那句「不要自己算分钟」是这条路的**唯一**护栏 ——
+        模型一旦自己算，错的时刻会带着一句「好的」一起交付。"""
+        for rule in skills._REMIND_RULE.values():
+            assert "at" in rule
+        assert "不要自己去算" in skills._REMIND_RULE["zh"]
+        assert "do not work out the minutes yourself" in skills._REMIND_RULE["en"]
+
+    def test_no_time_at_all_has_an_honest_fallback(self):
+        """没说时间、或超过 24 小时的，记进待办清单 —— 而不是回一句「做不到」。"""
+        assert "list_add" in skills.REMIND.tools
 
 
 class TestSetting:
@@ -131,6 +202,46 @@ class TestScheduler:
         sched.schedule("lens:devA", {"id": "rm_1", "at": time.time() + 0.02, "text": "ding"})
         await asyncio.sleep(0.15)
         assert fired == [("lens:devA", "ding")]
+
+    async def test_reconnecting_does_not_erase_what_is_pending(self, store):
+        """★ 真跑演示时抓到的：设完一条提醒，下一句问「有什么提醒」答「一条都没有」。
+
+        链路是这样的 —— 网关每次重连都会把磁盘上待响的重新排一遍（幂等恢复），
+        而旧实现的「重排」= 先取消再排；取消走的是 `_fire` 的收尾，
+        那段收尾**以为自己是响过了**，于是把这条从磁盘上划掉。
+        结果是两个互相矛盾的症状：`remind_list` 说没有，内存里那条却还会响。
+        """
+        row = {"id": "rm_1", "at": time.time() + 5, "text": "ding", "session": "lens:devA"}
+        store.write_text(json.dumps([row]))
+        sched = ReminderScheduler(_swallow)
+        for _ in range(3):                 # 连上、断开、再连上、再连上
+            for r in tools._load_reminders(GRACE_SECONDS):
+                sched.schedule(str(r["session"]), r)
+            # 让排下去的任务真的跑起来（跑到它那句 sleep 上）。少了这一步，
+            # 任务还没开始就被取消，收尾代码根本不会执行 —— 测试会变成空转，
+            # 把「取消时抹磁盘」这个 bug 一路放过去。
+            await asyncio.sleep(0.01)
+        assert json.loads(store.read_text()) == [row], "重连把待响的提醒抹掉了"
+        assert sched.pending == 1
+        assert (await call("remind_list")).startswith("1 ") or "1 条" in await call("remind_list")
+
+    async def test_shutting_down_does_not_erase_what_is_pending(self, store):
+        """进程退出时 `cancel_all()` 同样不是「响过了」。
+
+        旧实现下这是一场竞态：收尾跑得赢就把所有待响的提醒清空，跑不赢就留着。
+        用户看到的是「重启一次，交代过的事全没了」，而且没有任何日志。
+        """
+        rows = [{"id": f"rm_{i}", "at": time.time() + 5, "text": f"t{i}",
+                 "session": "lens:devA"} for i in range(3)]
+        store.write_text(json.dumps(rows))
+        sched = ReminderScheduler(_swallow)
+        for r in rows:
+            sched.schedule("lens:devA", r)
+        await asyncio.sleep(0.01)          # 同上：任务得先真的跑起来
+        sched.cancel_all()
+        await asyncio.sleep(0.01)          # 再给被取消的任务跑收尾的机会
+        assert json.loads(store.read_text()) == rows
+        assert sched.pending == 0
 
     async def test_firing_removes_it_from_disk(self, store):
         """响过不划掉的话，下次 restore 会在宽限期内**再响一遍**。"""

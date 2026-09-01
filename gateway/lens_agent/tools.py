@@ -17,10 +17,11 @@ import math
 import operator
 import os
 import pathlib
+import re
 import secrets
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from enum import Enum
 from typing import Any, Awaitable, Callable
 
@@ -610,14 +611,57 @@ def _when(at: float) -> str:
     return f"in {sec}s" if LOCALE == "en" else f"{sec} 秒后"
 
 
+#: `at` 只认 24 小时制的 `HH:MM`。刻意不做自然语言解析 —— 「明早九点半」
+#: 那种话由模型翻成 `09:30`，翻不出来就该说不知道，而不是让这里去猜。
+_CLOCK = re.compile(r"^\s*([01]?\d|2[0-3])\s*[:：]\s*([0-5]\d)\s*$")
+
+
+def _minutes_until_clock(at: str, day: str | None) -> float | str:
+    """把「几点」换算成「还有几分钟」。返回 str 表示这是一句给模型看的拒绝。
+
+    `day` 省略时取**下一次**出现的那个钟点：现在 21:09 说「9 点」指的是明早，
+    说「23 点」指的是今晚。这是人话的默认含义，把它交给模型去判反而多一个
+    出错的地方 —— 而错的后果是提醒晚响 24 小时，用户第二天才发现。
+    """
+    m = _CLOCK.match(str(at))
+    if not m:
+        return _t(f"看不懂的时刻「{at}」，要 24 小时制的 HH:MM，比如 09:00、21:30。",
+                  f"I cannot read the time '{at}'. Use 24-hour HH:MM, e.g. 09:00 or 21:30.")
+    hour, minute = int(m.group(1)), int(m.group(2))
+    now = datetime.now()
+    target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    day = (day or "").strip().lower()
+    if day == "tomorrow":
+        target += timedelta(days=1)
+    elif day != "today" and target <= now:
+        target += timedelta(days=1)      # 省略 day：取下一次出现的这个钟点
+    return (target - now).total_seconds() / 60
+
+
 async def _remind_set(args: dict) -> str:
     text = " ".join(str(args.get("text") or "").split())[:MAX_ITEM_CHARS]
     if not text:
         return _t("没有说要提醒什么", "no reminder text given")
-    try:
-        minutes = float(args.get("minutes"))
-    except (TypeError, ValueError):
-        return _t("minutes 必须是数字（分钟）", "minutes must be a number of minutes")
+    at = args.get("at")
+    has_at = isinstance(at, str) and at.strip() != ""
+    has_min = args.get("minutes") is not None
+    if has_at and has_min:
+        # 两个都给了就不猜。猜错的后果是提醒在错误的时间响，而用户在设的
+        # 那一刻收到的是「好的」—— 错误要到几小时后才暴露。
+        return _t("minutes 和 at 只能给一个。相对时间用 minutes，钟点用 at。",
+                  "Give either minutes or at, not both. minutes for a delay, at for a clock time.")
+    if not has_at and not has_min:
+        return _t("得说什么时候：相对时间用 minutes（分钟），钟点用 at（HH:MM）。",
+                  "Say when: minutes for a delay, at for a clock time (HH:MM).")
+    if has_at:
+        minutes = _minutes_until_clock(at, args.get("day"))
+        if isinstance(minutes, str):
+            return minutes
+    else:
+        try:
+            minutes = float(args.get("minutes"))
+        except (TypeError, ValueError):
+            return _t("minutes 必须是数字（分钟）", "minutes must be a number of minutes")
     if minutes <= 0:
         return _t("时间必须是将来。", "The time must be in the future.")
     if minutes * 60 > MAX_DELAY_SECONDS:
@@ -692,11 +736,13 @@ async def _remind_cancel(args: dict) -> str:
 
 REMIND_SET = Tool(
     name="remind_set",
-    description=_t("在若干分钟后提醒用户一件事。用户说「10 分钟后叫我」「半小时后提醒我关火」"
-                   "时用它。**必须真的调用**，不能只是嘴上答应。分钟数可以是小数"
-                   "（0.5 就是 30 秒）。只支持 24 小时以内。",
-                   "Remind the user of something after a number of minutes. Use it "
-                   "when they ask to be reminded, or to be told when time is up. "
+    description=_t("提醒用户一件事：要么「若干分钟之后」（minutes），要么「几点钟」（at）。"
+                   "「10 分钟后叫我」用 minutes=10；「明早九点提醒我看牙医」用 at=\"09:00\"。"
+                   "**必须真的调用**，不能只是嘴上答应。分钟数可以是小数（0.5 就是 30 秒）。"
+                   "只支持 24 小时以内。",
+                   "Remind the user of something, either after a number of minutes "
+                   "(minutes) or at a clock time (at). 'in 10 minutes' is minutes=10; "
+                   "'tomorrow at 9, call the dentist' is at=\"09:00\". "
                    "**You must actually call it** -- never just promise. Minutes may be "
                    "fractional (0.5 = 30 seconds). Within 24 hours only."),
     capability=Capability.WRITE,
@@ -705,8 +751,15 @@ REMIND_SET = Tool(
         "minutes": {"type": "number",
                     "description": "How many minutes from now. Fractions are fine: "
                                    "0.5 is 30 seconds, 90 is an hour and a half."},
+        "at": {"type": "string",
+               "description": "A clock time in 24-hour HH:MM, e.g. '09:00' or '21:30'. "
+                              "Use this instead of minutes when the user names a time "
+                              "of day. Do not compute the delay yourself."},
+        "day": {"type": "string", "enum": ["today", "tomorrow"],
+                "description": "Only with at. Omit it and the next occurrence of that "
+                               "clock time is used, which is what people usually mean."},
         "text": {"type": "string", "description": "What to say when it fires, short."}},
-        "required": ["minutes", "text"]},
+        "required": ["text"]},
     handler=_remind_set,
     label=_t("提醒", "Remind"),
     resources=(str(REMINDERS_PATH),),

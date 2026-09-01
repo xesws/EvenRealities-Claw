@@ -111,6 +111,28 @@ def _is_word_char(ch: str) -> bool:
     return ch.isascii() and (ch.isalnum() or ch in "_'-")
 
 
+#: 夹在两个词字符**中间**时算作词一部分的分隔符。
+#:
+#: 不加这个，`75.52` 会被切成 `75` / `.` / `52` 三个单元，断行时屏幕上出现
+#: 「75.」和「52」两行 —— 读者看到的是两个数，而这是真跑演示时撞上的。
+#: 只认「两边都是词字符」的情况，所以句末的 `.`、`3, 4` 里的逗号都不受影响。
+_INNER_SEP: frozenset[str] = frozenset(".,:/")
+
+
+def _scan_word(text: str, i: int, n: int) -> int:
+    """从 `i`（已确认是词字符）起扫一个不可腰斩的拉丁词，返回结束下标（不含）。"""
+    j = i
+    while j < n:
+        if _is_word_char(text[j]):
+            j += 1
+        elif (text[j] in _INNER_SEP
+              and j + 1 < n and _is_word_char(text[j + 1])):
+            j += 1                      # 数字里的小数点/千分位、时刻的冒号、日期的斜杠
+        else:
+            break
+    return j
+
+
 def _tokenize(text: str) -> list[str]:
     """切成「不可再分的排版单元」：拉丁词整体，其余逐字符。"""
     units: list[str] = []
@@ -118,9 +140,7 @@ def _tokenize(text: str) -> list[str]:
     n = len(text)
     while i < n:
         if _is_word_char(text[i]):
-            j = i
-            while j < n and _is_word_char(text[j]):
-                j += 1
+            j = _scan_word(text, i, n)
             units.append(text[i:j])
             i = j
         else:

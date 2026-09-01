@@ -255,6 +255,23 @@ class TestGates:
 # ------------------------------------------------------------------ 路由
 
 
+class TestBudgets:
+    def test_write_skills_get_at_least_the_two_round_trip_budget(self):
+        """写档超时的代价比只读档大：只读档超时是没答上，写档超时是**事没办成**，
+        而屏幕上只有一句「一时答不上来」，用户会以为办成了。
+
+        基准取 `daily` —— 它是形状相同（决定并调工具 → 组织回答，两次模型往返）
+        而工具本身几乎不耗时的那一档，所以它的预算就是「两次往返要留多少」的
+        实测值。写档不能比它紧。实测撞到过 6s 掉在 DeepSeek 的长尾上。
+        """
+        writers = [s for s in skills.SKILLS.values()
+                   if any(tools.REGISTRY[n].capability is tools.Capability.WRITE
+                          for n in s.tools)]
+        assert {s.name for s in writers} == {"list", "remind"}
+        for s in writers:
+            assert s.budget_ms >= skills.DAILY.budget_ms, s.name
+
+
 class TestRouting:
     """闸 2 的路由是纯函数，所以可以穷举。
 
@@ -299,7 +316,21 @@ class TestRouting:
         ("有什么提醒", "remind"),
         ("取消那个提醒", "remind"),
         ("cancel the timer", "remind"),
-        ("提醒我买牛奶", "list"),          # 没有时间量词 ⇒ 是记一笔，不是定时
+        # 钟点也算「说了时间」。这一行曾经落到兜底档，屏幕上回的是
+        # 「我还不会设提醒」—— 而它刚为「10 分钟后」设过一条。
+        ("Remind me to call the dentist tomorrow at 9.", "remind"),
+        ("明天早上九点提醒我看牙医", "remind"),
+        ("九点半叫我", "remind"),
+        ("wake me up at 6:30", "remind"),
+        # 「提醒我」一律进 remind 档，哪怕这条根本排不了程。**路由只判意图，
+        # 可行性是 skill 的事** —— 判据放进 regex 的那一版里，「下个月提醒我换
+        # 护照」落到 list 档，回的是一句「我还不会设提醒」，而它会。
+        ("提醒我买牛奶", "remind"),
+        ("Remind me to buy milk", "remind"),
+        ("Remind me to renew my passport next month", "remind"),
+        ("Cancel the dentist one.", "remind"),      # 它只有提醒这一样东西能取消
+        ("记一下明天要买牛奶", "list"),
+        ("叫我一声", "ask"),                        # 「叫我」太泛，得跟时间才算
         # 兜底
         ("讲个笑话", "ask"),
         ("Tell me a joke", "ask"),

@@ -22,6 +22,10 @@ LOCALE = os.environ.get("LENS_AGENT_LOCALE", "zh")
 #: 小屏输出契约。**逐字稳定**：DeepSeek 的缓存前缀按字节匹配，
 #: 这段文本每变一个字符，全部历史会话的 cache hit 就全部作废（§7.2）。
 #: 两种语言各一份常量，正是为了不去做字符串拼接 —— 拼出来的前缀迟早会飘。
+#:
+#: 新规则一律**追加在末尾**，不要往中间插：插在第 N 条会让第 N 条之后的所有
+#: 字节都对不上，追加则前面那一大段仍然命中缓存。规则的重要性顺序因此和
+#: 编号顺序不完全一致（第 8 条「跟随提问语言」并不比第 7 条次要）。
 CONTRACT_ZH = (
     "你的回答会显示在一副智能眼镜的抬头显示器上：正文区一页只有 8 行，"
     "每行约 28 个汉字。用户是在走路或做别的事时瞥一眼，不是坐着读。\n"
@@ -37,7 +41,8 @@ CONTRACT_ZH = (
     "4. 列举用「一是…二是…」行文，不要用 - 或 1. 起头。\n"
     "5. 非必要不超过两页（约 440 字）。能一句话说完就一句话。\n"
     "6. 只用常见汉字、数字和基本标点。emoji、生僻符号在这块屏上**什么都不显示**。\n"
-    "7. 不写时间戳、ID、模型名、token 数这类噪音。"
+    "7. 不写时间戳、ID、模型名、token 数这类噪音。\n"
+    "8. 用户用什么语言问，就用什么语言答。"
 )
 
 #: 英文版。每行 64 个字符、一页 8 行是**在真实版式上量出来的**，不是估的：
@@ -64,7 +69,8 @@ CONTRACT_EN = (
     "use one sentence.\n"
     "6. Plain letters, digits and basic punctuation only. Emoji and unusual "
     "symbols render as **nothing at all** on this screen.\n"
-    "7. No timestamps, ids, model names or token counts."
+    "7. No timestamps, ids, model names or token counts.\n"
+    "8. Answer in the language the user asked in."
 )
 
 CONTRACTS = {"zh": CONTRACT_ZH, "en": CONTRACT_EN}
@@ -162,7 +168,7 @@ LIST = Skill(
     name="list",
     system_prompt=_prompt(_LIST_RULE[LOCALE]),
     tools=("list_show", "list_add", "list_remove"),
-    budget_ms=6000,
+    budget_ms=8000,          # 写档一律和 daily 齐平，理由见 REMIND 的注释
 )
 
 _WEATHER_RULE = {
@@ -184,23 +190,40 @@ WEATHER = Skill(
 )
 
 _REMIND_RULE = {
-    "zh": ("用户要你在过一会儿之后提醒他时，**必须真的调 remind_set**，"
-           "并把分钟数算清楚（半小时=30，一刻钟=15）。绝不能只说「好的我会提醒你」—— "
-           "没调用工具就等于什么都没发生。超过 24 小时的直接说做不到，别硬记。"
-           "问「有什么提醒」用 remind_list，要取消用 remind_cancel。"),
+    "zh": ("用户要你过一会儿提醒他时，**必须真的调 remind_set**。"
+           "说「多久之后」就用 minutes（半小时=30，一刻钟=15）；说「几点」就用 "
+           "at 参数填 24 小时制的 HH:MM（「明早九点」= at 09:00），"
+           "**不要自己去算几点距现在多少分钟**，工具会算。"
+           "绝不能只说「好的我会提醒你」—— 没调用工具就等于什么都没发生。"
+           "超过 24 小时、或者用户根本没说时间的，改用 list_add 记进待办清单，"
+           "并如实告诉他你是记下来了、不是设了提醒。"
+           "问「有什么提醒」用 remind_list，要取消用 remind_cancel —— 用户要取消的东西"
+           "不在你的提醒里，就直说你只能取消自己设过的提醒，别去猜他指的是什么。"),
     "en": ("When the user asks to be reminded of something later, **you must "
-           "actually call remind_set**, working out the minutes yourself "
-           "(half an hour = 30, quarter of an hour = 15). Never just say you "
-           "will remind them -- if you did not call the tool, nothing happened. "
-           "Anything beyond 24 hours: say you cannot. Use remind_list to read "
-           "them back and remind_cancel to cancel one."),
+           "actually call remind_set**. For a delay use minutes (half an hour = "
+           "30, quarter of an hour = 15); for a time of day use at with a "
+           "24-hour HH:MM ('tomorrow at 9' is at=09:00) -- **do not work out the "
+           "minutes yourself**, the tool does that. Never just say you will "
+           "remind them: if you did not call the tool, nothing happened. "
+           "If it is more than 24 hours out, or they never said when, put it on "
+           "the todo list with list_add instead and tell them plainly that you "
+           "noted it rather than set a reminder. Use remind_list to read them "
+           "back and remind_cancel to cancel one. If what they want cancelled "
+           "is not one of your reminders, say plainly that reminders you set "
+           "are the only thing you can cancel -- do not guess at what they mean."),
 }
 
 REMIND = Skill(
     name="remind",
     system_prompt=_prompt(_REMIND_RULE[LOCALE]),
-    tools=("remind_set", "remind_list", "remind_cancel"),
-    budget_ms=6000,
+    # `list_add` 是这一档的**诚实退路**：超过 24 小时、或者用户压根没说时间，
+    # 没有它就只能回一句「做不到」，而这件事本来是记得下来的。
+    tools=("remind_set", "remind_list", "remind_cancel", "list_add"),
+    # 写档给 8s，和 daily 一样，比 6s 的只读档宽。形状是一样的两次模型往返
+    # （决定并调工具 → 组织回答），但**超时的代价不一样**：只读档超时就是没答上，
+    # 写档超时是用户交代的事没办成，而屏幕上只有一句「一时答不上来」。
+    # 实测撞到过：DeepSeek 长尾一次，「明天九点提醒我看牙医」直接掉在 6s 上。
+    budget_ms=8000,
 )
 
 _DEVICE_RULE = {
@@ -245,26 +268,53 @@ _WEATHER = re.compile(
 #: 和清单，而用户要的显然是**真的记下来**，不是告诉他明天几号。
 _LIST = re.compile(
     r"(记一下|记下|帮我记|加到.{0,6}(清单|单子|列表)|购物清单|待办|清单上|"
-    r"清单里|买什么|别忘了|提醒我买|删掉|买到了|"
+    r"清单里|买什么|别忘了|删掉|买到了|"
     r"\b(shopping|grocery|to-?do)\b|\bmy list\b|\bthe list\b|"
     r"add .{0,20}\b(to|onto)\b .{0,12}\blist\b|"
     r"(remember|note|jot) (that|this|down|to)|"
     r"what.{0,12}\bon (my|the) .{0,12}list\b|"
     r"(remove|delete|cross off|take) .{0,24}\b(list|off)\b)", re.I)
 
-#: 提醒/定时器 → remind。排在 list 之前：「提醒我买牛奶」两边都沾，
-#: 但「过一会儿叫我」这层意思只有 remind 能兑现。带时间量词的归 remind，
-#: 不带的（「提醒我买牛奶」= 记一笔）归 list —— 判据就是有没有「多久之后」。
+#: 「什么时候」的说法。**有没有它**就是「提醒我买牛奶」（记一笔 → list）和
+#: 「九点提醒我买牛奶」（定时 → remind）的分界线。
+#:
+#: 两类都要认，因为工具两种都收：相对量（`minutes`）和钟点（`at`）。
+#: 只认钟点不认「明天」这种没有钟点的说法 —— 没有钟点就没有可兑现的时刻，
+#: 硬归到 remind 只会逼模型自己编一个时间出来。
+_WHEN = (
+    r"(\d+|半|一刻|几)\s*(分钟|分|小时|钟头|秒)(之?后|以后)?|"
+    r"(明天|明早|明晨|明晚|今晚|今天|下午|上午|早上|早晨|中午|傍晚|晚上|夜里)"
+    r"[^，。,.]{0,4}([零一二三四五六七八九十两]{1,3}|\d{1,2})\s*点|"
+    r"([零一二三四五六七八九十两]{1,3}|\d{1,2})\s*点(半|[一二三四五六七八九十]{1,3}刻|\d{1,2}\s*分)?|"
+    r"\b(in|after)\s+\d+\s*(min|minute|hour|hr|sec|second)|"
+    r"\b(at|by)\s+\d{1,2}([:.]\d{2})?\s*(am|pm|o.?clock)?\b|"
+    r"\b\d{1,2}[:.]\d{2}\s*(am|pm)?\b|\b\d{1,2}\s*(am|pm)\b|"
+    r"\b(noon|midnight)\b"
+)
+
+#: 提醒/定时器 → remind。排在 list 之前。
+#:
+#: **路由只判意图，可行性交给 skill。** 一开始不是这样：regex 里带了「有没有
+#: 说时间」的判据，于是「下个月提醒我换护照」落到 list 档，而 list 档没有提醒
+#: 工具，模型照着契约第 1 条老老实实回了句「我还不会设提醒」—— 它会，
+#: 只是这条超出了 24 小时。**说自己做不到一件做得到的事**，和编一个答案一样糟。
+#:
+#: 现在「提醒我 / remind me / wake me」一律进 remind 档，由 skill 决定是
+#: `remind_set`（24 小时内、说得出钟点）还是 `list_add`（记进待办并如实说明）——
+#: 这是它自己的工具能不能兑现的问题，regex 判不了，也不该判。
+#: 「叫我 / tell me / ping me」这些说法太泛，仍然要跟一个时间表达式才算数。
 _REMIND = re.compile(
-    r"((\d+|半|一刻|几)\s*(分钟|分|小时|钟头|秒)(之?后|以后)?\s*(再|叫|提醒|喊|告诉)|"
+    r"(提醒我|\b(remind|wake) me\b|"
+    r"(" + _WHEN + r")[^，。,.]{0,10}(再|叫|提醒|喊|告诉|wake|remind|tell|ping)|"
+    r"(叫|喊)我[^，。,.]{0,14}(" + _WHEN + r")|"
+    r"\b(tell|ping)\s+me\b.{0,30}(" + _WHEN + r")|"
     r"(定|设)(个|一个)?(闹钟|定时器|计时器)|倒计时|"
-    r"(提醒|叫|喊)我.{0,12}(分钟|小时|之后|以后)|"
-    r"(分钟|小时|之后|以后).{0,8}(提醒|叫|喊)我|"
-    r"(有|还有)(什么|哪些)?提醒|取消.{0,6}(提醒|闹钟|定时)|"
+    r"(有|还有)(什么|哪些)?提醒|"
     r"\bset (a |an )?(timer|alarm|reminder)\b|\bcountdown\b|"
-    r"remind me (in|after) \d|\b(in|after) \d+ ?(min|minute|hour|hr)s?\b.{0,24}\b(remind|tell|call|ping)\b|"
-    r"\b(remind|tell|ping) me\b.{0,24}\b(in|after) \d+ ?(min|minute|hour|hr)|"
-    r"what (reminders|timers)|cancel (the |my )?(reminder|timer|alarm))", re.I)
+    r"what (reminders|timers)|"
+    # 取消一律进这一档：这个 agent 只有**一样**东西是它自己能取消的。
+    # 取消别的（会议、订阅）它本来就该说做不到，而 remind 档说得出为什么。
+    r"取消|\bcancel\b)", re.I)
 
 #: 眼镜自身 → device。放在很前面：「我眼镜还有多少电」里的「多少」很容易被
 #: 别的档蹭到，而这一档是唯一能给出真实读数的。

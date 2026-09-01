@@ -33,14 +33,23 @@ class ReminderScheduler:
         self._tasks: dict[str, asyncio.Task] = {}
 
     def schedule(self, session_key: str, row: dict) -> None:
-        """排一条（或按 `cancel` 撤一条）。重复排同一个 id = 重排。"""
+        """排一条（或按 `cancel` 撤一条）。**已经排着的同一个 id 直接跳过。**
+
+        跳过而不是重排，是因为「重复排同一个 id」在这套系统里只有一个来源：
+        网关重连时的恢复扫描，而它扫的正是当前排着的这些。重排要先取消，
+        取消会走 `_fire` 的收尾 —— 于是每重连一次，磁盘上的提醒就被"响过了"
+        的清理抹掉一批。症状是矛盾的：`remind_list` 说一条都没有，
+        内存里那条却还会到点响。
+        """
         rid = str(row.get("id") or "")
         if not rid:
             return
         if row.get("cancel"):
             self.cancel(rid)
             return
-        self.cancel(rid)
+        live = self._tasks.get(rid)
+        if live is not None and not live.done():
+            return
         self._tasks[rid] = asyncio.ensure_future(
             self._fire(session_key, rid, float(row.get("at", 0)), str(row.get("text", ""))))
 
@@ -80,19 +89,27 @@ class ReminderScheduler:
                 await asyncio.sleep(delay)
             await self._notify(session_key, text)
         except asyncio.CancelledError:
+            # ★ 取消**不是**响过。这里以前走的是共用的 finally，于是取消也会
+            # 把这条从磁盘上划掉 —— 而取消的来源有两个都无辜：网关重连时的
+            # 恢复扫描（重排同一条），和进程退出时的 `cancel_all()`。
+            # 后者意味着**每次重启都会清空所有待响的提醒**，而且是竞态的：
+            # 收尾跑得赢就清空，跑不赢就留着。谁都不报错。
+            #
+            # 真正需要从磁盘划掉的只有两种情况：响过了，和用户取消了。
+            # 后者由 `remind_cancel` 自己写盘，不经过这里。
+            self._tasks.pop(rid, None)
             raise
         except Exception:
             # 一条提醒响不出去不该带走别的。日志里必须留痕：
             # 用户唯一能察觉的症状是「说好要提醒我，结果没响」。
             log.exception("提醒 %s 送不出去", rid)
-        finally:
-            self._tasks.pop(rid, None)
-            # 响过就从磁盘上划掉，否则下次 restore 会在宽限期内再响一遍。
-            # **必须按宽限期读**：默认读法会丢掉所有已到点的条目，于是这次保存
-            # 会把别的、还在宽限期里等着补发的提醒一起抹掉 —— 它们再也不会响，
-            # 而且没有任何痕迹。
-            rows = [r for r in tools._load_reminders(GRACE_SECONDS) if r.get("id") != rid]
-            try:
-                tools._save_reminders(rows)
-            except OSError:
-                log.exception("提醒 %s 响过之后没能从磁盘划掉", rid)
+        self._tasks.pop(rid, None)
+        # 响过就从磁盘上划掉，否则下次 restore 会在宽限期内再响一遍。
+        # **必须按宽限期读**：默认读法会丢掉所有已到点的条目，于是这次保存
+        # 会把别的、还在宽限期里等着补发的提醒一起抹掉 —— 它们再也不会响，
+        # 而且没有任何痕迹。
+        rows = [r for r in tools._load_reminders(GRACE_SECONDS) if r.get("id") != rid]
+        try:
+            tools._save_reminders(rows)
+        except OSError:
+            log.exception("提醒 %s 响过之后没能从磁盘划掉", rid)

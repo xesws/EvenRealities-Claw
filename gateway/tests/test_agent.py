@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 
 import pytest
 from aiohttp import web
@@ -381,6 +382,23 @@ class TestSmallScreenContract:
         for skill in skills.SKILLS.values():
             assert "8 行" in skill.system_prompt
             assert "markdown" in skill.system_prompt
+
+    def test_both_locales_state_every_rule(self):
+        """两份契约是**手写的两份常量**（刻意不做拼接），所以只有扫描能防漏。
+
+        真跑演示时撞见过一次中文提问被英文作答 —— 契约里当时根本没有
+        「跟随提问语言」这条。规则条数对不上就说明有一份漏了。
+        """
+        counts = {}
+        for locale, text in skills.CONTRACTS.items():
+            nums = re.findall(r"^(\d+)\.", text, re.MULTILINE)
+            assert nums == [str(i) for i in range(1, len(nums) + 1)], (locale, nums)
+            counts[locale] = len(nums)
+        assert len(set(counts.values())) == 1, counts
+
+    @pytest.mark.parametrize("locale,needle", [("zh", "语言"), ("en", "language")])
+    def test_contract_pins_the_answer_language(self, locale, needle):
+        assert needle in skills.CONTRACTS[locale]
 
     def test_contract_prefix_is_byte_stable_across_skills(self):
         """§7.2：缓存前缀按字节匹配，这段文本每变一个字符，

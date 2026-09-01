@@ -46,7 +46,7 @@
 1. [系统形态与仓库地图](#1-系统形态与仓库地图)
 2. [各组件详细说明](#2-各组件详细说明)
 3. [一次问答的完整数据流（含实测耗时）](#3-一次问答的完整数据流)
-4. [验证结果汇总（pytest 554 + vitest 82 + 语音 e2e 31 + MCP e2e 27 + 真 agent e2e 21）](#4-验证结果汇总)
+4. [验证结果汇总（pytest 588 + vitest 82 + 语音 e2e 31 + MCP e2e 27 + 真 agent e2e 21）](#4-验证结果汇总)
 5. [【最重要】拿到眼镜后的完整上手流程](#5-拿到眼镜后的完整上手流程)
 6. [运维手册：服务、配置、日志、更新、**MCP 接入**](#6-运维手册)
 7. [排障速查表](#7-排障速查表)
@@ -121,7 +121,7 @@ EvenRealities-Claw/
 │   │   ├── tools.py           ←   能力枚举只有 READ/WRITE，**没有 exec 档**
 │   │   ├── audit.py           ←   每次工具调用一行 JSON
 │   │   └── llm/deepseek.py    ←   DeepSeek OpenAI 兼容端点（aiohttp 直发，理由见 AGENT-LAYER §6.2）
-│   ├── tests/                 ← 554 单测 + e2e_sim.py（语音 31 项）+ e2e_mcp.py（MCP 27 项）
+│   ├── tests/                 ← 588 单测 + e2e_sim.py（语音 31 项）+ e2e_mcp.py（MCP 27 项）
 │   │                            + e2e_agent.py（真 agent 20 项）+ data/（语音数据集 / HUD golden）
 │   ├── requirements.txt
 │   ├── requirements-mcp.txt   ← MCP 表面的依赖（网关本身不需要）
@@ -316,7 +316,7 @@ version / model / endpoint / production）。`demo/fake_openclaw.py` 会**自报
 
 | 验证 | 范围 | 结果 |
 |---|---|---|
-| `gateway/tests/`（pytest，全量） | 下列各专项之和：排版引擎/配对/JWT/设备抽象/遥测/控制面鉴权/控制面路由/MCP 工具/agent 层/agent 工具与提醒/ASR 质量/mic 看门狗/HUD golden/provider 连接生命周期 | **554/554** |
+| `gateway/tests/`（pytest，全量） | 下列各专项之和：排版引擎/配对/JWT/设备抽象/遥测/控制面鉴权/控制面路由/MCP 工具/agent 层/agent 工具与提醒/ASR 质量/mic 看门狗/HUD golden/provider 连接生命周期 | **588/588** |
 | 排版与认证 | 字形度量/折行禁则/像素盒分页/净化/markdown 降级/版式契约/配对/JWT/吊销/过期/持久化，含 3 宽度 × 31 语料的参数化不变量与 600 例随机模糊 | **169/169** |
 | **设备抽象层**（`tests/test_device.py`） | 帧节流与 coalescing、seq 单调、状态迁移、翻页四触发源等价与边界、租约冲突/续租/过期/抢占、外部渲染走同一排版引擎、事件缓冲增量拉取、快照结构 | **24/24** |
 | **会话装配与回收**（`tests/test_session.py`） | S5 工具态接活、错误分支、`reset` 重新注入小屏风格、消息路由、会话 TTL 只回收「离线且静默」、启动钩子只注册一次、ASR warmup 幂等 | **19/19** |
@@ -332,8 +332,8 @@ version / model / endpoint / production）。`demo/fake_openclaw.py` 会**自报
 | 插件字形与契约 | 用官方 pretext 逐字校验所有会上屏的字符；反向断言被替换的 10 个旧字形确实缺失；版式自洽 | **10/10** |
 | **官方模拟器实测** `tools/g2probe.mjs` | 8 屏自动化：满画布建页返回码、缺字渲染、26 个字形逐格墨迹判定、内容上限字节/字符口径 | 见 [docs/GLYPH-TABLE.md](docs/GLYPH-TABLE.md)、[docs/HARDWARE-SPEC.md](docs/HARDWARE-SPEC.md) |
 | **自研 agent 层**（`tests/test_agent.py`） | 思维链不上屏（3 条路径）、`tool_calls` 分片装配、模型 id 与 key 读取、技能路由的提示注入抗性、policy 白名单、工具能力档、loop 的降级与轮次上限、系统提示前缀字节稳定 | **51/51** |
-| **agent 工具与四道闸**（`tests/test_agent_tools.py`） | 12 个工具的真实执行，无打桩：`calc` 的注入表（`__import__` / 属性访问 / `9**9**9` 全被 AST 白名单挡住）、`days_until` 跨月跨年、`device` 没遥测时只说不知道、清单增删的全局查找与歧义拒绝、四道闸各自的构造期与运行期断言、路由表逐条、提示注入改不了 skill | **75/75** |
-| **提醒排程**（`tests/test_agent_reminders.py`） | 排程/取消/列出、进程重启后按宽限期补发、id 不碰撞、会话之间互不可见、24 小时上限、一条响完不抹掉别的还在宽限期里等着的 | **22/22** |
+| **agent 工具与四道闸**（`tests/test_agent_tools.py`） | 12 个工具的真实执行，无打桩：`calc` 的注入表（`__import__` / 属性访问 / `9**9**9` 全被 AST 白名单挡住）、`days_until` 跨月跨年、`device` 没遥测时只说不知道、清单增删的全局查找与歧义拒绝、四道闸各自的构造期与运行期断言、路由表逐条、提示注入改不了 skill | **85/85** |
+| **提醒排程**（`tests/test_agent_reminders.py`） | 排程/取消/列出、钟点换算（`at=09:00` 取下一次出现）、进程重启后按宽限期补发、id 不碰撞、会话之间互不可见、24 小时上限、一条响完不抹掉别的还在宽限期里等着的、**重连恢复与进程退出都不许清空磁盘** | **36/36** |
 | **ASR 质量**（`tests/test_asr_quality.py`） | 自建 10 条语音数据集（edge-tts，3 个音色，带 ground truth）跑**生产** `AsrEngine.final()`：CER 均值 0.0085（阈值 0.05）、最差 0.50 上限、弃转不计入错误但有上限、**热词回声零容忍** | **15/15** |
 | **mic 看门狗**（`tests/test_voice.py`） | 启麦慢与链路断用两个判据（此前混用一个硬编码 1.0s）；1.4s 处不误报的回归；预算非法值在加载期拒绝 | **11/11** |
 | **HUD 帧序列 golden**（`tests/test_hud_golden.py`） | 13 个场景 68 帧快照 + 每帧硬性不变量：**所有字形都在 G2 字库内**、行宽不超容器、行数不超 `floor(h/27)`、无裸 markdown、seq 单调、页脚与 `meta.page` 同源、W6 徽记全程一致 | **25/25** |
@@ -553,7 +553,7 @@ systemctl --user restart lens-gateway
 ```bash
 cd ~/EvenRealities-Claw/gateway
 .venv/bin/pip install -r requirements-dev.txt      # 测试依赖（pytest / pytest-asyncio / mcp）
-PYTHONPATH=. .venv/bin/pytest tests/ -q            # 554 单测，秒级
+PYTHONPATH=. .venv/bin/pytest tests/ -q            # 588 单测，秒级
 PYTHONPATH=. .venv/bin/python tests/e2e_sim.py     # 语音端到端，自足运行（~2 分钟）
 PYTHONPATH=. .venv/bin/python tests/e2e_mcp.py     # MCP 四进程真链路（~30 秒）
 
@@ -739,10 +739,15 @@ claude mcp add --transport http even-glasses http://127.0.0.1:8765/mcp
    用户看到的是「工具轮次用尽」的道歉；二是 `list_remove` 在用户不报清单名时
    落到默认清单，**「删成功了但其实什么都没删」**。前者提到 4 并把预算按
    「模型往返次数」重定，后者改成找不到就在所有清单里找。
-   新增 97 条单测，10 个关键变异全部被咬住（把 `_eval_node` 换成真 `eval`、
-   摘掉闸 3 的构造期检查、去掉清单全局查找、让 `device` 没数据时编 82%、
-   去掉 stale 标注、提醒 id 退回会撞的时间戳、会话隔离被摘掉、宽限期失效、
-   24 小时上限被摘掉、取消有歧义时不再拒绝）。
+   这一章新增 121 条单测（`test_agent_tools.py` 85 + `test_agent_reminders.py` 36），
+   16 个关键变异全部被咬住：把 `_eval_node` 换成真 `eval`、摘掉闸 3 的构造期检查、
+   去掉清单全局查找、让 `device` 没数据时编 82%、去掉 stale 标注、
+   提醒 id 退回会撞的时间戳、会话隔离被摘掉、宽限期失效、24 小时上限被摘掉、
+   取消有歧义时不再拒绝、钟点解析放宽到什么都收、省略 `day` 时不再跨天、
+   `minutes` 与 `at` 同时给出时不再拒绝、把「取消」从路由里摘掉、
+   写档预算压回 6s、以及**同时**摘掉提醒收尾的两层防护。
+   另有 10 条落在别处：折行的数字断行 6 条（`test_formatting.py`）、
+   契约两份规则条数一致与「跟随提问语言」4 条（`test_agent.py`）。
 
    补到「提醒」的时候撞上一个归属问题：**agent 有状态、网关有屏幕**，而到点响铃
    两样都要。放网关则 `remind_list`/`remind_cancel` 拿不到自己排过的东西；放 agent
@@ -751,12 +756,28 @@ claude mcp add --transport http even-glasses http://127.0.0.1:8765/mcp
    抢不到就不写 —— 抢掉用户正在读的那一屏比提醒迟到更糟。细节见
    [docs/AGENT-LAYER.md](docs/AGENT-LAYER.md) 的「提醒：状态在 agent，响铃在网关」。
 
+   工具补齐之后又拿真链路一句一句问，逼出了三处只有跑起来才看得见的问题：
+   一句中文提问被英文答了（契约里当时没有「跟随提问语言」这条，补成第 8 条）；
+   「下个月提醒我换护照」回了句「我还不会设提醒」——**说自己做不到一件做得到的事**，
+   和编一个答案一样糟（路由的判据从「有没有说时间」改成只判意图，
+   可行性交给 skill：24 小时内就排程，超出就记进待办并如实说明）；
+   以及汇率答案里的 `75.52` 被断成「75.」和「52」两行，读者看到的是两个数
+   （折行时数字中间的小数点/千分位/冒号/斜杠不再算断行机会）。
+
    **提醒这一档有两个不会报错的坑，都是变异测试挖出来的**，而它们的共同点是
    「症状要等到出事那一刻才出现」：一是提醒 id 用毫秒时间戳取模，同一秒里连排两条
    会撞，而排程器看到相同 id 会把前一条**取消**再排新的 ⇒ `remind_list` 说有两条、
    实际只响一条；二是一条响完之后从磁盘划掉时用了默认读法，而默认读法会丢掉所有
    已到点的条目 ⇒ 这次保存把别的、还在宽限期里等着补发的提醒**一起抹掉了**。
    两条都不抛异常、不打日志，用户唯一能察觉的是「说好要提醒我，结果没响」。
+
+   第三个坑是真链路问出来的，而且更狠：**取消被当成了「响过了」**。
+   「响完从磁盘划掉」那段收尾写在 `finally` 里，于是任务被 `cancel()` 时也跑一遍，
+   而取消的两个来源都是无辜的 —— 网关重连时的幂等恢复（重排同一条 ⇒ 先取消再排）、
+   进程退出时的 `cancel_all()`。前者的症状是**设完提醒、下一句问「有什么提醒」
+   答「一条都没有」**，而内存里那条其实还会响；后者意味着每次重启都可能把所有
+   待响的提醒清空，且是竞态的：收尾跑得赢就清空，跑不赢就留着。
+   修成了两层（取消分支不碰磁盘 + 恢复扫描幂等），回归测试把两层同时摘掉才会红。
 
 ## 12. 阶段三预告（设计已定稿，未开发）
 

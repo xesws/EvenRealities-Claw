@@ -35,6 +35,7 @@ import asyncio
 import json
 import os
 import pathlib
+import secrets
 import sys
 import time
 
@@ -191,8 +192,14 @@ async def main() -> None:
     ap.add_argument("-q", "--question", help="问一句就退")
     ap.add_argument("-f", "--file", help="一行一题，批量跑")
     ap.add_argument("--raw", action="store_true", help="同时显示未排版的原始答案")
-    ap.add_argument("--session", default="cli", help="会话 key（决定对话记忆）")
+    ap.add_argument("--session", default="",
+                    help="会话 key（决定对话记忆）。默认每次启动都是新的；"
+                         "显式给一个值才能接着上次的对话往下问")
     args = ap.parse_args()
+    # 默认每次启动换一个 key。agent 的对话记忆是**按 key 存在它进程里**的，
+    # 固定成 "cli" 的话，这一次的第一题会接着上一次第一题的历史往下答 ——
+    # 实测撞见过：上一轮问的是中文，这一轮的英文问题被用中文回答了。
+    args.session = args.session or "cli-" + secrets.token_hex(3)
 
     async with aiohttp.ClientSession() as http:
         try:
