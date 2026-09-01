@@ -248,6 +248,31 @@ describe('接线：镜腿长按真的走到 PttController', () => {
     });
   }
 
+  // 真链路上抓到的 bug，17 个单测全绿也照样漏 —— 因为它们把 setUi 注入成桩，
+  // 永远碰不到真的 LensUi 指针处理器。现象：镜腿长按开麦成功，约一秒后录音
+  // 自己没了，日志里有 mic open 紧跟 mic closed，却没有任何 release 事件。
+  it('★ 手势起的录音，不能被一个「光标掠过按钮」的 pointerleave 杀掉', () => {
+    mock.simulateGesture('longPress', 'glassesR');
+    expect(pttBtn().classList.contains('active')).toBe(true);
+
+    // 注意**没有** pointerdown：从来没有手指按下过这个按钮。
+    // 光标只是离开了它 —— 而按钮文字刚从"按住说话"变成更长的"松开发送"，
+    // 边界会自己移到静止的光标下面，浏览器就合成一个 pointerleave。
+    pttBtn().dispatchEvent(new Event('pointerleave', { bubbles: true }));
+
+    expect(pttBtn().classList.contains('active')).toBe(true);
+    expect(pttBtn().textContent).toBe(t.pttActive);
+  });
+
+  it('但手机按钮真的被按下—抬起时，仍然要能结束一次手势起的录音', () => {
+    mock.simulateGesture('longPress', 'glassesR');
+    // pointerdown 是唯一有资格置 pttPressed 的入口
+    pttBtn().dispatchEvent(new Event('pointerdown', { bubbles: true }));
+    pttBtn().dispatchEvent(new Event('pointerup', { bubbles: true }));
+    expect(pttBtn().classList.contains('active')).toBe(false);
+    expect(pttBtn().textContent).toBe(t.ptt);
+  });
+
   it('jsdom 里没有麦克风 ⇒ 走开麦失败那条路：按钮自己复位', async () => {
     mock.simulateGesture('longPress', 'glassesR');
     expect(pttBtn().classList.contains('active')).toBe(true);

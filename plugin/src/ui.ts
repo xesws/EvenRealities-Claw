@@ -218,12 +218,23 @@ export class LensUi {
 
   /**
    * 同步"按住说话"按钮的外观（**只改 UI，不触发任何回调**）。
-   * 供外部取消路径复用：手势退出、前台交互层关闭、开麦失败。
-   * 置 false 后手指真正抬起时 `pointerup` 会因 `pttPressed` 已为 false 而空转，
-   * 不会重复发一次 ptt stop。
+   * 供外部取消路径复用：手势退出、前台交互层关闭、开麦失败、镜腿长按。
+   *
+   * `pttPressed` 的处理是**刻意不对称**的：
+   * - 置 false 会清掉它 —— 外部取消之后，手指真正抬起时 `pointerup` 才会空转，
+   *   不重复发一次 ptt stop。这是这个标志原本的用途。
+   * - 置 true **不**设它。这个标志的语义是「此刻有指针正按在这个按钮上」，
+   *   只有 `pointerdown` 有资格声称这件事。镜腿长按发起的录音只该改外观 ——
+   *   一旦置真，下面 `pointerleave` / `pointerup` 的守卫就失效了，于是光标从按钮
+   *   边缘掠过就能杀掉一次录音。而按钮文字这时刚从"按住说话"变成更长的"松开发送"，
+   *   边界会自己移到静止的光标下面，浏览器合成一个 pointerleave —— 真链路上就是这么
+   *   触发的：mic open 之后约一秒 mic closed，全程没有任何 release 事件。
+   *
+   * 防双开不依赖这个标志：`PttController.start()` 自己有 `if (this.pttActive) return`。
+   * "按一下手机按钮结束一次镜腿起的录音"也照常有效：pointerdown 会正常置真。
    */
   setPttActive(active: boolean): void {
-    this.pttPressed = active;
+    if (!active) this.pttPressed = false;
     const ptt = this.els.pttBtn;
     ptt.classList.toggle('active', active);
     ptt.textContent = active ? t.pttActive : t.ptt;
