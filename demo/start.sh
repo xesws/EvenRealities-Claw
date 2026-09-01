@@ -103,9 +103,12 @@ JSON
 fi
 
 # 插件产物（网关托管 /plugin/，与页面同源，配对屏地址会自动推导）
+# EVENHUB_HARNESS=1 是必须的：默认构建**不含** harness/probe（它们带官方 pretext 的
+# 完整字形度量表 ~130KB，装到用户眼镜上是纯负担，见 plugin/vite.config.ts）。
+# 少了它，下面打印的 /plugin/harness/harness.html 是 404，而这正是本脚本让人打开的地址。
 if [ ! -f "${ROOT}/plugin/dist/harness/harness.html" ]; then
-  echo "▸ 构建插件…"
-  (cd "${ROOT}/plugin" && npm run build >/dev/null)
+  echo "▸ 构建插件（含浏览器夹具）…"
+  (cd "${ROOT}/plugin" && EVENHUB_HARNESS=1 npm run build >/dev/null)
 fi
 
 PIDS=()
