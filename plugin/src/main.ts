@@ -6,6 +6,7 @@ import { t } from './strings';
 import type { DeviceStatus } from '@evenrealities/even_hub_sdk';
 import { connectBridge, GlassesController, type InputGesture } from './glasses';
 import { HUD_TEXT } from './hud';
+import { PttController } from './ptt';
 import { ConfigStore } from './store';
 import type { FrameContainers } from './types';
 import { defaultGatewayUrl, LensUi } from './ui';
@@ -16,7 +17,6 @@ const WATCHDOG_STATUS = HUD_TEXT.linkLost;
 
 const store = new ConfigStore();
 let glasses: GlassesController | null = null;
-let pttActive = false;
 let gatewayUrl = '';
 /** 最近一帧，用于从前台交互层返回时重绘（overlay 可能盖过画面）。 */
 let lastFrame: FrameContainers | null = null;
@@ -42,34 +42,13 @@ const ui = new LensUi({
     client.startPairing(url, code, deviceName());
   },
   onPttStart() {
-    // 修 B2/B3：**先开麦、确认成功、再告诉网关开始说话**。
-    // 以前是先发 ptt start 再异步开麦，而网关只给 1.4s 等第一块 PCM ——
-    // 这 1.4s 要塞下 WS RTT + BLE 下发 + 固件启麦 + 首块回传 + 插件攒包 + 上行，
-    // 真机上几乎必然误报"麦克风没有声音"。
-    pttActive = true;
-    void (async () => {
-      const ok = glasses ? await glasses.audioControl(true) : true;
-      if (!pttActive) return;                 // 期间已松手/取消
-      if (!ok) {
-        pttActive = false;
-        ui.setPttActive(false);
-        ui.toast(t.micFailed);
-        return;
-      }
-      client.sendPttStart();
-    })();
+    ptt.start('button');
   },
   onPttStop() {
-    if (!pttActive) return;
-    pttActive = false;
-    void glasses?.audioControl(false);
-    client.sendPttStop();
+    ptt.stop();
   },
   onPttCancel() {
-    if (!pttActive) return;
-    pttActive = false;
-    void glasses?.audioControl(false);
-    client.sendPttCancel();
+    ptt.cancel();
   },
   onAbort() {
     client.sendAbort();
@@ -136,14 +115,16 @@ const client = new LensClient({
   },
 });
 
-/** 停掉正在进行的录音（关麦 + 通知网关），供多处复用。 */
-function cancelPtt(): void {
-  if (!pttActive) return;
-  pttActive = false;
-  ui.setPttActive(false);
-  client.sendPttCancel();
-  void glasses?.audioControl(false);
-}
+const ptt = new PttController({
+  // 没有 bridge（不在 Even App 内跑）时按"开麦成功"处理：
+  // 眼镜画面不可用不该顺带把手机上的说话按钮也废掉。
+  audioControl: (open) => (glasses ? glasses.audioControl(open) : Promise.resolve(true)),
+  sendStart: () => client.sendPttStart(),
+  sendStop: () => client.sendPttStop(),
+  sendCancel: () => client.sendPttCancel(),
+  setUi: (active) => ui.setPttActive(active),
+  toast: (msg) => ui.toast(msg),
+});
 
 /**
  * 镜腿 / R1 戒指手势 → 动作。
@@ -166,15 +147,18 @@ function handleGesture(g: InputGesture): void {
       if (g.source === 'ring') {
         client.sendPage('prev');
       } else {
-        cancelPtt();
+        ptt.cancel();
         void glasses?.exit();   // 官方标准退出
       }
       break;
     case 'longPress':
-    case 'longPressRelease':
-      // 长按暂未绑定动作。关键是**不能**把它误判成单击 ——
+      // 长按 = 按住说话，来源不设限（镜腿与戒指都认）。关键是**不能**把它误判成单击 ——
       // SDK 0.0.10 上长按会被降级成 CLICK，一次长按等于两次误翻页。
-      console.debug('[main] 未绑定的长按手势', g);
+      ptt.start('gesture');
+      break;
+    case 'longPressRelease':
+      // 松手事件同样走 BLE，丢一帧就永远不来 —— 兜底的是 PttController 里的看门狗。
+      ptt.stop();
       break;
   }
 }
@@ -206,18 +190,18 @@ async function bootstrap(): Promise<void> {
       onForegroundExit() {
         // 前台交互层关闭，**页面仍挂载**：只暂停录音，绝不断开 WS。
         // 以前它和 SYSTEM_EXIT 走同一条 teardown，用户瞥一眼别的再回来连接就永久丢了。
-        cancelPtt();
+        ptt.cancel();
       },
       onForegroundEnter() {
         // 回到前台：overlay 可能盖过画面，重绘最近一帧
         if (lastFrame) glasses?.renderFrame(lastFrame);
       },
       onExit() {
-        cancelPtt();
+        ptt.cancel();
         client.disconnect();
       },
       onAudioPcm(pcm) {
-        if (pttActive) client.sendPcm(pcm);
+        if (ptt.active) client.sendPcm(pcm);
       },
       onDeviceStatus(status) {
         ui.setGlassesStatus(formatGlassesStatus(status));
@@ -250,7 +234,7 @@ async function bootstrap(): Promise<void> {
 }
 
 window.addEventListener('beforeunload', () => {
-  cancelPtt();
+  ptt.cancel();
 });
 
 void bootstrap();

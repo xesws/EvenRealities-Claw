@@ -34,14 +34,6 @@ function frame(seq: number, body = '你好'): FrameMessage {
   } as FrameMessage;
 }
 
-/** 走完一次完整认证：accept → hello_ok。返回当前 socket。 */
-function goOnline(seq = 1): StubSocket {
-  const ws = StubSocket.last;
-  ws.accept();
-  ws.push({ type: 'hello_ok', resume: frame(seq) });
-  return ws;
-}
-
 beforeEach(() => {
   uninstall = installStubTransport();
   vi.useFakeTimers();

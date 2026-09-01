@@ -43,6 +43,7 @@ const DICT = {
     savedReconnecting: '已保存网关地址，正在重连',
 
     micFailed: '麦克风没能打开，请重试',
+    pttTimeout: '没等到松手，已自动停止录音',
     busy: '上一条还在处理，说“打断”或稍等',
     serverError: (code: string) => `服务器错误（${code}）`,
 
@@ -90,6 +91,7 @@ const DICT = {
     savedReconnecting: 'Gateway address saved, reconnecting',
 
     micFailed: 'Could not open the microphone. Try again.',
+    pttTimeout: 'No release received. Recording stopped.',
     busy: 'Still working on the last one. Say stop, or wait.',
     serverError: (code: string) => `Server error (${code})`,
 

@@ -14,5 +14,5 @@
     "noFallthroughCasesInSwitch": true,
     "skipLibCheck": true
   },
-  "include": ["src", "harness", "vite.config.ts"]
+  "include": ["src", "harness", "tests", "vite.config.ts"]
 }
